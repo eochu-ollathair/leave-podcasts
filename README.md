@@ -8,7 +8,13 @@ Your part is to provide your own Telegram bot and let the assistant use that com
 
 ![A microphone and long podcast sound wave becoming three short lines](assets/github-hero.png)
 
-Choose podcasts and get a short Telegram report instead of listening for hours. Each morning it can also pick a few episodes from Ireland's popular podcast list, saved the evening before. The starting choice is three popular episodes, two points from each podcast you chose, and one point from each popular episode. Change all three numbers on the page. Each point says why it matters, with your own sceptical reading beneath that podcast. More points make the report longer than two minutes.
+Choose podcasts and get a short Telegram report instead of listening for hours. You can also include episodes from Ireland's popular podcast list, saved the evening before. Set how many episodes and points you want on the webpage. The free version quotes speech; if you connect your own text AI, it can explain why each point matters and add your sceptical view beneath each podcast.
+
+### The webpage you get
+
+![Leave the Podcasts settings page showing example podcasts and morning delivery choices](assets/settings-preview.png)
+
+*A fresh copy with example choices. Your own settings page opens on your computer.*
 
 ## Download the program
 
