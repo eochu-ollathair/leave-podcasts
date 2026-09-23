@@ -2,7 +2,7 @@
 
 ![A microphone and long podcast sound wave becoming three short lines](assets/github-hero.png)
 
-Choose podcasts and get a short Telegram report instead of listening for hours. Each morning it can also pick a few episodes from Ireland's popular podcast list, saved the evening before. The starting choice is three popular episodes and two points from each podcast you chose. Change either number on the page. Each point says why it matters, with your own sceptical reading beneath that podcast. Popular episodes get one point each so the whole message stays near two minutes.
+Choose podcasts and get a short Telegram report instead of listening for hours. Each morning it can also pick a few episodes from Ireland's popular podcast list, saved the evening before. The starting choice is three popular episodes, two points from each podcast you chose, and one point from each popular episode. Change all three numbers on the page. Each point says why it matters, with your own sceptical reading beneath that podcast. More points make the report longer than two minutes.
 
 ## Download the program
 

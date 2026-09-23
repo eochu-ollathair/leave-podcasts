@@ -53,7 +53,7 @@ def save_json(path, value):
 
 def defaults():
     return {"shows": [], "blocked_shows": [], "lines": 2, "trending_count": 3,
-            "angle": "", "enabled": False,
+            "popular_points": 1, "angle": "", "enabled": False,
             "time": "08:00", "timezone": "Europe/Dublin"}
 
 
@@ -112,8 +112,14 @@ def validate(value):
         raise ValueError("Choose a whole number of popular podcasts") from None
     if not 0 <= trending_count <= 5:
         raise ValueError("Choose 0 to 5 popular podcasts")
+    try:
+        popular_points = int(value.get("popular_points", 1))
+    except (TypeError, ValueError):
+        raise ValueError("Choose a whole number of points per popular episode") from None
+    if not 1 <= popular_points <= 5:
+        raise ValueError("Choose 1 to 5 points per popular episode")
     return {"shows": shows, "blocked_shows": blocked_shows,
-            "lines": lines, "trending_count": trending_count,
+            "lines": lines, "trending_count": trending_count, "popular_points": popular_points,
             "angle": str(value.get("angle", "")).strip()[:400],
             "enabled": bool(value.get("enabled", False)), "time": send_time, "timezone": tz}
 
@@ -687,7 +693,11 @@ def report(config, progress=lambda stage: None):
                 break
             try:
                 episode = trending_episode(entry)
-                if not episode or ignored({"name": episode["show"], "feed": episode["feed"]}) \
+                if not episode:
+                    problems.append("Popular list number " + str(entry["rank"]) +
+                                    ": the episode was not in its public show list")
+                    continue
+                if ignored({"name": episode["show"], "feed": episode["feed"]}) \
                         or episode_id(episode) in already_sent or episode_id(episode) in chosen_ids:
                     continue
                 episode["chart_day"] = chart["day"]
@@ -713,7 +723,8 @@ def report(config, progress=lambda stage: None):
     for episode, speech in readable:
         try:
             sections.append(episode_report(episode, speech, config.get("angle", ""),
-                                           1 if episode.get("chart_rank") else count))
+                                           config.get("popular_points", 1)
+                                           if episode.get("chart_rank") else count))
             used_ids.append(episode_id(episode))
             reported.append({key: episode[key] for key in ("show", "title", "published", "url")})
         except Exception as exc:
