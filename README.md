@@ -2,7 +2,7 @@
 
 ![A microphone and long podcast sound wave becoming three short lines](assets/github-hero.png)
 
-Choose podcasts and get three short Telegram lines instead of listening for hours. Search by show name, choose how many recent episodes to read, preview the report, and send one yourself.
+Choose podcasts and get a short Telegram report instead of listening for hours. Search by show name, choose how many recent episodes to read and how many lines you want, preview the report, and send one yourself. The starting length is three lines; change it on the page.
 
 ## Download the program
 
@@ -10,11 +10,15 @@ Choose podcasts and get three short Telegram lines instead of listening for hour
 
 This version runs on a Mac or Linux computer with Python 3.10 or newer. It is not a phone app, and the Windows starter is not ready yet. The computer must stay on to send the morning report.
 
+## Give this to your own AI
+
+Send it this [project link](https://github.com/eochu-ollathair/leave-podcasts) and say: **“Read AGENTS.md and get my own copy working. Help me pick podcasts, make a real preview, and connect my Telegram. Show me what actually worked.”** The [assistant instructions](AGENTS.md) give it the exact checks. It should use your own accounts and keep your private details off GitHub.
+
 The free report quotes useful speech and needs no AI account. If you connect your own text AI, it can combine claims, say why they matter, and put your sceptical angle at the end. A suspected motive stays a possibility unless there is evidence. The maker's own AI is not available to other users.
 
 ## For people who want to run it by hand
 
-The starter runs `app.py serve` and checks once a minute whether the morning report is due. The private page controls podcasts, episode counts, delivery time and previews. It searches the public Apple Podcasts directory or uses a feed address you paste. It reads published transcripts when available; otherwise a local speech recogniser reads temporary episode audio. The audio is deleted after reading, while recognised speech is kept in `data/` for later reports. An episode with no readable speech is left out.
+The starter runs `app.py serve` and checks once a minute whether the morning report is due. The private page controls podcasts, episode counts, report length, delivery time and previews. It searches the public Apple Podcasts directory or uses a feed address you paste. It reads published transcripts when available; otherwise a local speech recogniser reads temporary episode audio. The audio is deleted after reading, while recognised speech is kept in `data/` for later reports. An episode with no readable speech is left out. After an episode is sent, it is removed from the page and never chosen for another report.
 
 You can also run `python3 app.py daily` from a scheduled task if you prefer. The starter keeps your bot code and chat number in the private `data/telegram.json` file, which is excluded from GitHub. A manual setup may instead set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in its environment. The optional text AI uses `PODCAST_MODEL_URL`, `PODCAST_MODEL`, and if needed `PODCAST_MODEL_KEY`.
 

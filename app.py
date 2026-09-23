@@ -30,6 +30,7 @@ BASE = os.environ.get("PODCAST_BASE", "").rstrip("/")
 SETTINGS = DATA / "settings.json"
 LAST = DATA / "last_report.json"
 DELIVERY = DATA / "last_delivery.json"
+SENT_EPISODES = DATA / "sent_episodes.json"
 SOURCE_FILE = ROOT / "dist" / "leave-podcasts-source.zip"
 MODEL_URL = os.environ.get("PODCAST_MODEL_URL", "")
 MODEL_NAME = os.environ.get("PODCAST_MODEL", "")
@@ -49,7 +50,8 @@ def save_json(path, value):
 
 
 def defaults():
-    return {"shows": [], "angle": "", "enabled": False, "time": "08:00", "timezone": "Europe/Dublin"}
+    return {"shows": [], "lines": 3, "angle": "", "enabled": False,
+            "time": "08:00", "timezone": "Europe/Dublin"}
 
 
 def settings():
@@ -84,7 +86,13 @@ def validate(value):
         ZoneInfo(tz)
     except Exception:
         raise ValueError("Choose a valid time zone") from None
-    return {"shows": shows, "angle": str(value.get("angle", "")).strip()[:400],
+    try:
+        lines = int(value.get("lines", 3))
+    except (TypeError, ValueError):
+        raise ValueError("Choose a whole number of report lines") from None
+    if not 1 <= lines <= 20:
+        raise ValueError("Choose 1 to 20 report lines")
+    return {"shows": shows, "lines": lines, "angle": str(value.get("angle", "")).strip()[:400],
             "enabled": bool(value.get("enabled", False)), "time": send_time, "timezone": tz}
 
 
@@ -270,7 +278,36 @@ def model_answer(system, prompt, limit=700):
     return (response.json()["choices"][0]["message"].get("content") or "").strip()
 
 
-def extractive_points(episode, speech):
+def episode_notes(episode, speech):
+    speech = re.sub(r"\b(one|two|three|four|five) and (one|two|three|four|five) who\b",
+                    "[unclear number] who", speech, flags=re.IGNORECASE)
+    parts = [speech[i:i + 18000] for i in range(0, len(speech), 18000)]
+    system = ("Extract concrete claims from podcast speech. Say who said them if clear. "
+              "Keep numbers, reasons, disagreements and caveats. If speech is unclear, "
+              "do not repair a number by guessing. Do not invent facts. "
+              "Give at most five short points. No introduction.")
+    notes = []
+    for index, part in enumerate(parts, 1):
+        prompt = ("SHOW: " + episode["show"] + "\nEPISODE: " + episode["title"] +
+                  "\nPART: " + str(index) + "/" + str(len(parts)) + "\nSPEECH:\n" + part)
+        digest = hashlib.sha256((MODEL_URL + MODEL_NAME + system + prompt).encode()).hexdigest()
+        path = DATA / "notes" / (digest + ".txt")
+        if path.exists() and path.stat().st_size > 30:
+            note = path.read_text(encoding="utf-8")
+        else:
+            note = model_answer(system, prompt)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent,
+                                             prefix="note-", delete=False) as temporary:
+                temporary.write(note)
+                temporary_path = Path(temporary.name)
+            temporary_path.chmod(0o600)
+            os.replace(temporary_path, path)
+        notes.append(episode["show"] + " — " + episode["title"] + ":\n" + note)
+    return notes
+
+
+def extractive_points(episode, speech, limit=3):
     sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", speech)
     candidates = []
     for index, sentence in enumerate(sentences):
@@ -294,10 +331,10 @@ def extractive_points(episode, speech):
                 continue
             result.append((sentence, words))
             return
-    for part in range(3):
+    for part in range(min(limit, 3)):
         take([item for item in candidates if part * len(sentences) // 3 <= item[0]
               < (part + 1) * len(sentences) // 3])
-    while len(result) < 3:
+    while len(result) < limit:
         before = len(result)
         take(candidates)
         if len(result) == before:
@@ -305,69 +342,97 @@ def extractive_points(episode, speech):
     return [episode["show"] + ': “' + sentence + '”' for sentence, _ in result]
 
 
-def three_lines(episodes, angle=""):
+def make_report_lines(episodes, angle="", count=3):
     if MODEL_URL and MODEL_NAME:
         notes = []
         for episode, speech in episodes:
-            speech = re.sub(r"\b(one|two|three|four|five) and (one|two|three|four|five) who\b",
-                            "[unclear number] who", speech, flags=re.IGNORECASE)
-            parts = [speech[i:i + 18000] for i in range(0, len(speech), 18000)]
-            for index, part in enumerate(parts, 1):
-                system = ("Extract concrete claims from podcast speech. Say who said them if clear. "
-                          "Keep numbers, reasons, disagreements and caveats. If speech is unclear, "
-                          "do not repair a number by guessing. Do not invent facts. "
-                          "Give at most five short points. No introduction.")
-                note = model_answer(system, "SHOW: " + episode["show"] + "\nEPISODE: " + episode["title"] +
-                                    "\nPART: " + str(index) + "/" + str(len(parts)) + "\nSPEECH:\n" + part)
-                notes.append(episode["show"] + " — " + episode["title"] + ":\n" + note)
-        system = ("Write EXACTLY FOUR numbered lines, each at most 35 words. Lines 1 to 3 each give one "
-                  "specific claim and why it matters. If three readable podcasts are in the notes, use one "
-                  "line per podcast in their listed order. Otherwise use only the readable podcasts; never "
-                  "invent a missing show. Attribute "
-                  "each claim. Line 4 starts 'Cynic's view:' and applies the owner's angle at the end: "
+            notes.extend(episode_notes(episode, speech))
+        final_number = count + 1
+        system = ("Write EXACTLY " + str(final_number) + " numbered lines, each at most 35 words. "
+                  "Lines 1 to " + str(count) + " each give one specific claim and why it matters. "
+                  "Include each readable podcast at least once when there are enough lines, in the order "
+                  "listed. If there are more podcasts than lines, pick the strongest distinct claims. "
+                  "Never invent a missing show. Attribute each claim. Line " + str(final_number) +
+                  " starts 'Cynic's view:' and applies the owner's angle at the end: "
                   "explain the practical importance, who might benefit, or what evidence is missing. "
                   "A possible hidden motive must say 'might', 'could', or be a question, never a fact. "
                   "Preserve numbers exactly; a percentage below 50 is not a majority. Never guess what "
                   "unclear speech means. Do not invent facts. Use plain words and no filler.")
         prompt = "OWNER'S ANGLE: " + (angle or "No special angle") + "\nNOTES:\n" + "\n\n".join(notes)
-        answer = model_answer(system, prompt, limit=550)
+        answer = model_answer(system, prompt, limit=max(550, min(2400, final_number * 110)))
         numbered = {}
         for line in answer.splitlines():
-            match = re.match(r"^\s*([1-4])[.)]\s*(.+)", line)
+            match = re.match(r"^\s*(\d+)[.)]\s*(.+)", line)
             if match:
                 numbered[int(match.group(1))] = match.group(2).strip()
-        if all(index in numbered for index in (1, 2, 3, 4)):
-            cynic = re.sub(r"^Cynic(?:'s|’s)? view:\s*", "", numbered[4], flags=re.IGNORECASE)
-            return [numbered[index] for index in (1, 2, 3)], cynic
+        if all(index in numbered for index in range(1, final_number + 1)):
+            cynic = re.sub(r"^Cynic(?:'s|’s)? view:\s*", "", numbered[final_number], flags=re.IGNORECASE)
+            return [numbered[index] for index in range(1, final_number)], cynic
+    buckets = [extractive_points(episode, speech, limit=count) for episode, speech in episodes]
     points = []
-    for episode, speech in episodes:
-        points.extend(extractive_points(episode, speech))
-    return (points + ["No further clear point was found in the available speech."] * 3)[:3], ""
+    while len(points) < count and any(buckets):
+        for bucket in buckets:
+            if bucket and len(points) < count:
+                points.append(bucket.pop(0))
+    return points or ["No clear point was found in the available speech."], ""
+
+
+def episode_id(episode):
+    return hashlib.sha256(episode["guid"].encode()).hexdigest()
+
+
+def sent_episode_ids():
+    ids = set()
+    if SENT_EPISODES.exists():
+        ids.update(json.loads(SENT_EPISODES.read_text(encoding="utf-8")).get("ids", []))
+    if LAST.exists():
+        previous = json.loads(LAST.read_text(encoding="utf-8"))
+        if previous.get("sent"):
+            ids.update(previous.get("used_ids", []))
+    return ids
+
+
+def retire_sent_episodes(result):
+    save_json(SENT_EPISODES, {"ids": sorted(sent_episode_ids() | set(result.get("used_ids", [])))})
+    result["episodes"] = []
 
 
 def report(config, progress=lambda stage: None):
     selected, readable, problems = [], [], []
+    already_sent = sent_episode_ids()
+    feeds_read = 0
     for show in config["shows"]:
         progress("Finding episodes from " + show["name"])
         try:
             episodes = read_feed(show)
+            feeds_read += 1
         except Exception as exc:
             problems.append(show["name"] + ": " + str(exc)[:120])
             continue
         for episode in episodes:
+            if episode_id(episode) in already_sent:
+                continue
             selected.append({key: episode[key] for key in ("show", "title", "published", "url")})
             progress("Reading " + episode["title"][:50])
             try:
                 readable.append((episode, speech_for(episode)))
             except Exception as exc:
                 problems.append(episode["title"] + ": " + str(exc)[:120])
+    if not selected:
+        if not feeds_read and problems:
+            raise RuntimeError("No podcast episode lists could be read. " + "; ".join(problems[:2]))
+        return {"at": datetime.now(timezone.utc).isoformat(), "episodes": [], "usable": 0,
+                "used_ids": [], "lines": [], "cynic": "", "no_new": True,
+                "message": "No new episodes since the last report.", "problems": problems}
     if not readable:
         raise RuntimeError("No episode speech could be read. " + "; ".join(problems[:2]))
-    progress("Writing three lines")
-    lines, cynic = three_lines(readable, config.get("angle", ""))
+    count = config.get("lines", 3)
+    progress("Writing the report")
+    lines, cynic = make_report_lines(readable, config.get("angle", ""), count)
     day = datetime.now(ZoneInfo(config["timezone"])).strftime("%d %B %Y")
     return {"at": datetime.now(timezone.utc).isoformat(), "episodes": selected, "usable": len(readable),
-            "lines": lines, "cynic": cynic,
+            "used_ids": sorted(episode_id(episode) for episode, _ in readable),
+            "lines": lines, "cynic": cynic, "no_new": False,
             "message": "Leave the Podcasts · " + day + "\n" + "\n".join(lines) +
                        ("\nCynic's view: " + cynic if cynic else ""),
             "problems": problems}
@@ -384,7 +449,22 @@ def send_telegram(message):
         raise RuntimeError("Telegram refused the report")
 
 
-def run(kind):
+def recent_preview(config):
+    if not LAST.exists():
+        return None
+    saved = json.loads(LAST.read_text(encoding="utf-8"))
+    if (saved.get("kind") != "preview" or saved.get("sent") or saved.get("no_new")
+            or saved.get("settings") != config or not saved.get("used_ids")
+            or set(saved["used_ids"]) & sent_episode_ids()):
+        return None
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(saved["at"])).total_seconds()
+    except (KeyError, ValueError, TypeError):
+        return None
+    return saved if 0 <= age < 7200 else None
+
+
+def run(kind, automatic=False):
     DATA.mkdir(parents=True, exist_ok=True)
     with (DATA / "run.lock").open("a+") as lock:
         try:
@@ -392,13 +472,19 @@ def run(kind):
         except BlockingIOError:
             raise RuntimeError("Another report is already running") from None
         config = settings()
-        result = report(config, lambda stage: job.update(stage=stage))
+        result = recent_preview(config) if kind == "send" and not automatic else None
+        if result is None:
+            result = report(config, lambda stage: job.update(stage=stage))
+        result["kind"] = kind
         result["settings"] = config
         result["sent"] = False
         if kind == "send":
-            send_telegram(result["message"])
-            result["sent"] = True
-            save_json(DELIVERY, {"date": datetime.now(ZoneInfo(config["timezone"])).date().isoformat()})
+            if not result.get("no_new"):
+                send_telegram(result["message"])
+                retire_sent_episodes(result)
+                result["sent"] = True
+            if result["sent"] or automatic:
+                save_json(DELIVERY, {"date": datetime.now(ZoneInfo(config["timezone"])).date().isoformat()})
         save_json(LAST, result)
         return result
 
@@ -410,8 +496,10 @@ def start(kind):
 
     def work():
         try:
-            run(kind)
-            job.update(stage="Finished", running=False)
+            result = run(kind)
+            stage = "Sent to Telegram" if result["sent"] else (
+                "No new episodes to send" if result.get("no_new") else "Preview ready")
+            job.update(stage=stage, running=False)
         except Exception as exc:
             job.update(stage="Could not finish", running=False, error=str(exc)[:300])
         finally:
@@ -533,7 +621,7 @@ def daily_loop():
     while True:
         try:
             if daily_due(settings()):
-                run("send")
+                run("send", automatic=True)
         except Exception as exc:
             print("Morning podcast report could not be sent: " + str(exc)[:200], flush=True)
         time.sleep(60)
@@ -550,7 +638,8 @@ def main():
             threading.Thread(target=daily_loop, daemon=True).start()
         app.run(host=args.host, port=args.port)
     elif args.mode != "daily" or daily_due(settings()):
-        result = run("send" if args.mode in ("send", "daily") else "preview")
+        result = run("send" if args.mode in ("send", "daily") else "preview",
+                     automatic=args.mode == "daily")
         print(result["message"])
 
 
