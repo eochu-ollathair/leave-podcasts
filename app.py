@@ -92,6 +92,23 @@ def opening_key():
     key = os.environ.get("PODCAST_ACCESS_KEY", "")
     if key:
         return key
+    credentials = os.environ.get("PODCAST_CREDENTIALS_FILE", "")
+    if credentials:
+        path = Path(credentials)
+        path.touch(mode=0o600, exist_ok=True)
+        with path.open("r+", encoding="utf-8") as stream:
+            fcntl.flock(stream, fcntl.LOCK_EX)
+            for line in stream:
+                if line.startswith("Leave the Podcasts access key: "):
+                    saved = line.split(": ", 1)[1].strip()
+                    if saved:
+                        return saved
+            saved = secrets.token_urlsafe(32)
+            stream.seek(0, os.SEEK_END)
+            stream.write("\nLeave the Podcasts access key: " + saved + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+            return saved
     path = DATA / "access-key"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
