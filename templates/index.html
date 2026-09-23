@@ -11,15 +11,15 @@
 </head>
 <body><main>
   <div class="top">Leave the Podcasts</div><h1>Hours of talk.<br>Three useful lines.</h1>
-  <p class="lead">Pick podcasts. Read what they actually said, why it matters, and what their words may leave out.</p>
+  <p class="lead">Pick podcasts. Get three useful lines from what they actually said. With your own AI, add why it matters and what their words may leave out.</p>
   <div class="layout"><div>
     <section class="card"><h2>Find a podcast</h2><p class="small">Search by its name, then add it to your list.</p>
       <div class="row"><input class="search" id="query" style="flex:1" placeholder="Podcast name"><button id="search">Search</button></div>
       <div id="results"></div>
     </section>
     <section class="card"><h2>Your podcasts</h2><div id="shows"></div>
-      <p class="small">If a podcast is missing from search, paste its feed address.</p>
-      <div class="row"><input id="feedName" style="flex:1;min-width:150px" placeholder="Podcast name"><input id="feedUrl" style="flex:2;min-width:220px" placeholder="Feed address"><button id="addFeed">Add</button></div>
+      <p class="small">If a podcast is missing from search, paste the link to its episode list.</p>
+      <div class="row"><input id="feedName" style="flex:1;min-width:150px" placeholder="Podcast name"><input id="feedUrl" style="flex:2;min-width:220px" placeholder="Link to its episodes"><button id="addFeed">Add</button></div>
     </section>
     <section class="card"><h2>Your angle</h2><p class="small">Say how to read the claims. Possible motives must be labelled as guesses.</p><textarea id="angle" maxlength="400" rows="3" placeholder="Be sceptical. Look for what is missing, who benefits, and what the speaker may want."></textarea></section>
     <section class="card"><h2>Three lines</h2><div id="report" class="three small">Make a preview to see the report here.</div><div id="episodes"></div></section>
@@ -47,14 +47,14 @@ function addShow(name,feed){if(!choices.shows.some(s=>s.feed===feed)){choices.sh
 function renderReport(last){
   $('#report').className=last?.lines?'three':'three small';
   $('#report').innerHTML=last?.lines?last.lines.map((line,i)=>`<span>${i+1}. ${esc(line)}</span>`).join(''):'Make a preview to see the report here.';
-  $('#episodes').innerHTML=last?.episodes?.length?'<h3 style="margin-top:17px">Episodes read</h3>'+last.episodes.map(e=>`<div class="episode"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title)}</a><div class="small">${esc(e.show)} · ${esc(e.published)}</div></div>`).join(''):'';
+  $('#episodes').innerHTML=(last?.episodes?.length?'<h3 style="margin-top:17px">Episodes checked</h3>'+last.episodes.map(e=>`<div class="episode"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title)}</a><div class="small">${esc(e.show)} · ${esc(e.published)}</div></div>`).join(''):'')+(last?.problems?.length?'<h3 style="margin-top:17px">Could not read</h3>'+last.problems.map(x=>`<div class="small error">${esc(x)}</div>`).join(''):'');
 }
 async function load(){const r=await fetch(BASE+'/api/status',{credentials:'same-origin'});if(!r.ok)throw Error('Could not open your settings');const d=await r.json();if(!choices){choices=d.settings;$('#angle').value=choices.angle||'';$('#time').value=choices.time;$('#timezone').value=choices.timezone;$('#enabled').checked=choices.enabled;renderShows()}renderReport(d.last);if(d.job.running){pending=true;say(d.job.stage+'…');setTimeout(load,3000)}else if(pending){pending=false;say(d.job.error||'Finished.',!!d.job.error)}else if(d.job.error){say(d.job.error,true)}document.querySelectorAll('#preview,#send').forEach(b=>b.disabled=d.job.running)}
 async function save(){choices.angle=$('#angle').value.trim();choices.time=$('#time').value;choices.timezone=$('#timezone').value.trim();choices.enabled=$('#enabled').checked;const r=await fetch(BASE+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Podcast-Action':'yes'},credentials:'same-origin',body:JSON.stringify(choices)});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not save');choices=d.settings;return d}
 async function run(kind){try{await save();const r=await fetch(BASE+'/api/run/'+kind,{method:'POST',headers:{'X-Podcast-Action':'yes'},credentials:'same-origin'});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not start');pending=true;say(kind==='send'?'Reading and sending…':'Reading episodes…');setTimeout(load,1000)}catch(e){say(e.message,true)}}
 $('#search').onclick=async()=>{const q=$('#query').value.trim();if(q.length<2)return;$('#results').textContent='Searching…';try{const r=await fetch(BASE+'/api/search?q='+encodeURIComponent(q));const d=await r.json();if(!r.ok)throw Error(d.error||'Search failed');$('#results').innerHTML=d.results.length?d.results.map((x,i)=>`<div class="result"><strong>${esc(x.name)}</strong><div class="small">${esc(x.maker)}</div><button data-add="${i}">Add podcast</button></div>`).join(''):'No matches found.';document.querySelectorAll('[data-add]').forEach(e=>e.onclick=()=>{const x=d.results[Number(e.dataset.add)];addShow(x.name,x.feed)})}catch(e){$('#results').textContent=e.message}};
 $('#query').onkeydown=e=>{if(e.key==='Enter')$('#search').click()};
-$('#addFeed').onclick=()=>{const name=$('#feedName').value.trim(),feed=$('#feedUrl').value.trim();if(!name||!feed)return say('Add a name and feed address.',true);addShow(name,feed);$('#feedName').value='';$('#feedUrl').value=''};
+$('#addFeed').onclick=()=>{const name=$('#feedName').value.trim(),feed=$('#feedUrl').value.trim();if(!name||!feed)return say('Add a name and a link to its episodes.',true);addShow(name,feed);$('#feedName').value='';$('#feedUrl').value=''};
 $('#save').onclick=async()=>{try{await save();say('Choices saved.')}catch(e){say(e.message,true)}};
 $('#preview').onclick=()=>run('preview');$('#send').onclick=()=>run('send');
 load().catch(e=>say(e.message,true));

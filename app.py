@@ -69,7 +69,7 @@ def validate(value):
         name = str(item.get("name", "")).strip()[:100]
         feed = str(item.get("feed", "")).strip()[:1200]
         if not name or urlparse(feed).scheme not in ("http", "https") or not urlparse(feed).netloc:
-            raise ValueError("Each podcast needs a name and a feed address")
+            raise ValueError("Each podcast needs a name and a link to its episodes")
         count = int(item.get("count", 1))
         if not 1 <= count <= 3:
             raise ValueError("Choose 1 to 3 episodes per podcast")
