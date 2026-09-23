@@ -6,12 +6,13 @@
   <style>
     :root{color-scheme:dark;--bg:#0c141b;--card:#17232c;--ink:#f1f7f6;--muted:#acc0c4;--line:#3a5059;--blue:#7feaf1;--gold:#f4c47d}
     *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top right,#213747,var(--bg) 48%);color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:24px 18px 70px}h1{font-size:clamp(38px,8vw,67px);line-height:1.02;letter-spacing:-.05em;margin:10px 0 15px}h2{font-size:22px;margin:0 0 8px}h3{font-size:16px;margin:0}p{margin:0 0 12px}.lead{font-size:19px;color:var(--muted);max-width:650px}.layout{display:grid;grid-template-columns:1.5fr .8fr;gap:16px}.card{background:var(--card);border:1px solid var(--line);border-radius:17px;padding:20px;margin-top:16px}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.small{color:var(--muted);font-size:13px}input,textarea{background:#0d1921;color:var(--ink);border:1px solid #516670;border-radius:9px;padding:11px;font:inherit;min-height:44px}input{width:100%}textarea{width:100%;resize:vertical}button{background:#30424a;border:1px solid #58717b;border-radius:9px;color:var(--ink);padding:11px 13px;min-height:44px;font:700 14px system-ui;cursor:pointer}button:hover{border-color:var(--blue)}button.primary{background:var(--blue);color:#082127;border-color:var(--blue)}button:disabled{opacity:.5;cursor:wait}.show,.result,.episode{border-top:1px solid var(--line);padding:12px 0}.show:first-child,.result:first-child,.episode:first-child{border-top:0}.show strong,.result strong{display:block}.three{white-space:pre-wrap;font-size:18px;line-height:1.55}.three span{display:block;padding:7px 0;border-top:1px solid var(--line)}.three span:first-child{border-top:0}.three .cynic{color:var(--gold);margin-top:8px}.error{color:#ffb7a7}.top{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--blue);font-weight:800}.aside{align-self:start;position:sticky;top:16px}label{font-weight:700;font-size:13px;display:block;margin:12px 0 6px}.actions{display:flex;gap:8px;flex-wrap:wrap}.tiny{width:75px}.short{width:130px}a{color:var(--blue)}
+    .report-show{border-top:1px solid var(--line);padding:18px 0}.report-show:first-child{border-top:0;padding-top:0}.report-show h3{font-size:19px;margin-bottom:2px}.report-point{padding:12px 0;border-top:1px solid var(--line)}.report-point:first-of-type{border-top:0}.report-point .reason{display:block;color:var(--muted);font-size:15px;margin-top:4px;border:0;padding:0}.report-view{color:var(--gold);font-size:15px;padding-top:10px}
     @media(max-width:760px){.layout{display:block}.aside{position:static}.card{padding:16px}.row input.search{flex-basis:100%}}
   </style>
 </head>
 <body><main>
   <div class="top">Leave the Podcasts</div><h1>Hours of talk.<br>A few useful lines.</h1>
-  <p class="lead">Pick podcasts and how many lines you want. Read what they actually said. With your own AI, add why it matters and what their words may leave out.</p>
+  <p class="lead">Pick podcasts and how many points to get from each one. See what they said, why each point matters, and your sceptical take beneath that podcast.</p>
   <div class="layout"><div>
     <section class="card"><h2>Find a podcast</h2><p class="small">Search by its name, then add it to your list.</p>
       <div class="row"><input class="search" id="query" style="flex:1" placeholder="Podcast name"><button id="search">Search</button></div>
@@ -21,18 +22,18 @@
       <p class="small">If a podcast is missing from search, paste the link to its episode list.</p>
       <div class="row"><input id="feedName" style="flex:1;min-width:150px" placeholder="Podcast name"><input id="feedUrl" style="flex:2;min-width:220px" placeholder="Link to its episodes"><button id="addFeed">Add</button></div>
     </section>
-    <section class="card"><h2>Your angle</h2><p class="small">Your sceptical take goes at the end of the report. Possible motives stay labelled as guesses.</p><textarea id="angle" maxlength="400" rows="3" placeholder="Why does this matter from a cynic's point of view? Look for who benefits, what is missing, and what the speaker may want."></textarea></section>
+    <section class="card"><h2>Your angle</h2><p class="small">Your sceptical take goes beneath each podcast. Possible motives stay labelled as guesses.</p><textarea id="angle" maxlength="400" rows="3" placeholder="Why does this matter from a cynic's point of view? Look for who benefits, what is missing, and what the speaker may want."></textarea></section>
     <section class="card"><h2>Your report</h2><div id="report" class="three small">Make a preview to see the report here.</div><div id="episodes"></div></section>
   </div><div class="aside">
     <section class="card"><h2>Delivery</h2><label><input id="enabled" type="checkbox" style="width:auto;min-height:auto"> Send to Telegram each morning</label>
-      <label for="lineCount">Lines in each report</label><input id="lineCount" type="number" min="1" max="20" value="3" style="width:110px">
+      <label for="lineCount">Points from each podcast</label><input id="lineCount" type="number" min="1" max="20" value="3" style="width:110px">
       <label for="time">Morning time</label><input id="time" type="time" value="08:00">
       <label for="timezone">Time zone</label><input id="timezone" value="Europe/Dublin">
       <div class="actions" style="margin-top:16px"><button id="save" class="primary">Save choices</button><button id="preview">Make preview</button><button id="send">Send to Telegram now</button></div>
       <p id="status" class="small" style="margin-top:13px">Ready.</p>
     </section>
   </div></div>
-  <p class="small" style="margin-top:24px">If an episode has no published transcript, this app turns its audio into words on your own computer. Long episodes can take time. Spoken claims are not independently proven facts.</p>
+  <p class="small" style="margin-top:24px">If an episode has no written speech, your computer turns its audio into words. Long episodes can take time. To check a claim, open the named episode and find the study or record the speaker cites.</p>
 </main>
 <script>
 const BASE={{ base|tojson }};let choices=null,pending=false;
@@ -46,9 +47,15 @@ function renderShows(){
 }
 function addShow(name,feed){if(!choices.shows.some(s=>s.feed===feed)){choices.shows.push({name,feed,count:1});renderShows();say(name+' added. Save choices to keep it.')}}
 function renderReport(last){
+  const sections=last?.sections||[];
+  if(sections.length){
+    $('#report').className='three';
+    $('#report').innerHTML=sections.map(s=>`<div class="report-show"><h3>${esc(s.show)}</h3><div class="small"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></div>${s.points.map((p,i)=>`<div class="report-point"><strong>${i+1}. ${esc(p.subject)}:</strong> ${esc(p.claim)}${p.why?`<span class="reason"><strong>Why it matters:</strong> ${esc(p.why)}</span>`:''}</div>`).join('')}${s.view?`<div class="report-view"><strong>Cynic's view:</strong> ${esc(s.view)}</div>`:''}</div>`).join('');
+  }else{
   const hasLines=Array.isArray(last?.lines)&&last.lines.length>0;
   $('#report').className=hasLines?'three':'three small';
   $('#report').innerHTML=hasLines?last.lines.map((line,i)=>`<span>${i+1}. ${esc(line)}</span>`).join('')+(last.cynic?`<span class="cynic"><strong>Cynic's view:</strong> ${esc(last.cynic)}</span>`:''):(last?.no_new?esc(last.message):'Make a preview to see the report here.');
+  }
   $('#episodes').innerHTML=(last?.episodes?.length?'<h3 style="margin-top:17px">Episodes checked</h3>'+last.episodes.map(e=>`<div class="episode"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title)}</a><div class="small">${esc(e.show)} · ${esc(e.published)}</div></div>`).join(''):'')+(last?.problems?.length?'<h3 style="margin-top:17px">Could not read</h3>'+last.problems.map(x=>`<div class="small error">${esc(x)}</div>`).join(''):'');
 }
 async function load(){const r=await fetch(BASE+'/api/status',{credentials:'same-origin'});if(!r.ok)throw Error('Could not open your settings');const d=await r.json();if(!choices){choices=d.settings;$('#angle').value=choices.angle||'';$('#lineCount').value=choices.lines??3;$('#time').value=choices.time;$('#timezone').value=choices.timezone;$('#enabled').checked=choices.enabled;renderShows()}renderReport(d.last);if(d.job.running){pending=true;say(d.job.stage+'…');setTimeout(load,3000)}else if(pending){pending=false;say(d.job.error||d.job.stage||'Finished.',!!d.job.error)}else if(d.job.error){say(d.job.error,true)}document.querySelectorAll('#preview,#send').forEach(b=>b.disabled=d.job.running)}

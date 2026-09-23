@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # READ FIRST: /root/app/leave-podcasts/PROJECT_NOTES.md
-"""Read podcast speech and send a three-line morning report."""
+"""Read podcast speech and send separate short reports for each show."""
 
 import argparse
 import fcntl
@@ -89,9 +89,9 @@ def validate(value):
     try:
         lines = int(value.get("lines", 3))
     except (TypeError, ValueError):
-        raise ValueError("Choose a whole number of report lines") from None
+        raise ValueError("Choose a whole number of points per podcast") from None
     if not 1 <= lines <= 20:
-        raise ValueError("Choose 1 to 20 report lines")
+        raise ValueError("Choose 1 to 20 points per podcast")
     return {"shows": shows, "lines": lines, "angle": str(value.get("angle", "")).strip()[:400],
             "enabled": bool(value.get("enabled", False)), "time": send_time, "timezone": tz}
 
@@ -175,8 +175,11 @@ def read_feed(show):
                 transcripts.append({"url": element.attrib["url"],
                                     "type": element.attrib.get("type", "")})
         if title and (transcripts or audio is not None):
+            episode_url = child_text(item, "link") or show["feed"]
+            if urlparse(episode_url).scheme not in ("http", "https"):
+                episode_url = show["feed"]
             episodes.append({"show": show["name"], "title": title, "published": published,
-                             "url": child_text(item, "link") or show["feed"],
+                             "url": episode_url,
                              "guid": child_text(item, "guid") or title + published,
                              "audio": audio.attrib.get("url", "") if audio is not None else "",
                              "transcripts": transcripts})
@@ -282,10 +285,15 @@ def episode_notes(episode, speech):
     speech = re.sub(r"\b(one|two|three|four|five) and (one|two|three|four|five) who\b",
                     "[unclear number] who", speech, flags=re.IGNORECASE)
     parts = [speech[i:i + 18000] for i in range(0, len(speech), 18000)]
-    system = ("Extract concrete claims from podcast speech. Say who said them if clear. "
-              "Keep numbers, reasons, disagreements and caveats. If speech is unclear, "
-              "do not repair a number by guessing. Do not invent facts. "
-              "Give at most five short points. No introduction.")
+    system = ("Extract concrete claims from podcast speech. Say who said them only if clear. "
+              "A host and guest may answer each other; never assign one person's words to the "
+              "other. If unsure, say 'a speaker'. "
+              "Keep the numbers as spoken, with their original units. Never calculate a new "
+              "price, rate or percentage from numbers in the speech. Keep reasons, disagreements "
+              "and caveats, including when a number comes from a speaker or company's own test. "
+              "If speech is unclear, do not repair a number by guessing. Ignore adverts and "
+              "introductions. Give at most six short points from different subjects where possible. "
+              "Do not invent facts. No introduction.")
     notes = []
     for index, part in enumerate(parts, 1):
         prompt = ("SHOW: " + episode["show"] + "\nEPISODE: " + episode["title"] +
@@ -303,7 +311,8 @@ def episode_notes(episode, speech):
                 temporary_path = Path(temporary.name)
             temporary_path.chmod(0o600)
             os.replace(temporary_path, path)
-        notes.append(episode["show"] + " — " + episode["title"] + ":\n" + note)
+        notes.append("Part " + str(index) + " of " + str(len(parts)) + " — " +
+                     episode["show"] + " — " + episode["title"] + ":\n" + note)
     return notes
 
 
@@ -342,62 +351,147 @@ def extractive_points(episode, speech, limit=3):
     return [episode["show"] + ': “' + sentence + '”' for sentence, _ in result]
 
 
-def make_report_lines(episodes, angle="", count=3):
+def plain_report_words(value):
+    replacements = {"AI": "artificial intelligence", "US": "United States",
+                    "UK": "United Kingdom", "EV": "electric car", "EVs": "electric cars"}
+    for short, full in replacements.items():
+        value = re.sub(r"\b" + re.escape(short) + r"\b", full, value)
+    return value.strip()
+
+
+def sceptical_view(points, angle):
+    money_points = [point for point in points if re.search(
+        r"\b(?:compensat\w*|paid|payment|profit\w*|received money)\b",
+        point["claim"], flags=re.IGNORECASE)]
+    focus_points = money_points or points
+    system = ("Write one short sceptical view beneath this podcast only. Choose ONE named subject "
+              "from its points. If a point explicitly names who received money or power, state "
+              "that visible benefit and the record that would confirm it. Otherwise name the "
+              "specific study, account or repeat test needed to check one claim. "
+              "Do not guess why any law or action happened. Do not invent beneficiaries, people, "
+              "products or transactions. Do not say one result settles a broad question. "
+              "Do not discuss other podcasts or ask a question. Use ordinary words, no shortened "
+              "terms or vague phrases like 'more evidence'. At most 35 words.")
+    answer = model_answer(system, "OWNER'S ANGLE: " + (angle or "Be sceptical") +
+                          "\nTHIS PODCAST'S POINTS:\n" + json.dumps(focus_points), limit=180)
+    view = plain_report_words(re.sub(r"^\s*(?:Cynic(?:'s|’s)? view:\s*)?", "", answer,
+                                     flags=re.IGNORECASE).splitlines()[0] if answer else "")
+    if not view:
+        raise RuntimeError("Could not write the sceptical view")
+    if len(view.split()) > 35:
+        shorter = model_answer("Shorten this to one sentence of at most 30 words. Keep the "
+                               "specific subject and exact check or named recipient. Do not add "
+                               "a motive or new fact.", view, limit=100)
+        view = plain_report_words(shorter.splitlines()[0] if shorter else "")
+    if len(view.split()) > 35:
+        raise RuntimeError("The sceptical view was too long")
+    return view
+
+
+def read_report_points(answer, count, show):
+    try:
+        parsed = json.loads(answer[answer.index("{"):answer.rindex("}") + 1])
+        raw_points = parsed["points"]
+        if len(raw_points) != count:
+            raise ValueError("wrong number of points")
+        points = [{key: plain_report_words(str(item[key])) for key in
+                   ("subject", "claim", "why")} for item in raw_points]
+        if any(not all(point.values()) for point in points):
+            raise ValueError("empty point")
+        return points
+    except (ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError("Could not write the requested points for " + show) from exc
+
+
+def numbers_in_text(value):
+    return {match.replace(",", "") for match in re.findall(
+        r"(?<![A-Za-z])\d+(?:[,.]\d+)*", value)}
+
+
+def check_spoken_numbers(points, speech, show):
+    spoken = numbers_in_text(speech)
+    for index, point in enumerate(points):
+        missing = numbers_in_text(point["claim"] + " " + point["why"]) - spoken
+        if not missing:
+            continue
+        keywords = [word.lower() for word in re.findall(r"[A-Za-z]{5,}", point["subject"])]
+        locations = [speech.lower().find(word) for word in keywords]
+        location = next((place for place in locations if place >= 0), 0)
+        excerpt = speech[max(0, location - 1500):location + 7000]
+        system = ("Rewrite this ONE point using the original speech. The listed numbers were "
+                  "not found in the speech and must be removed or replaced by the exact spoken "
+                  "amounts. Keep the same subject and practical reason. Do not calculate a new "
+                  "price or percentage. Return only JSON in this form: "
+                  '{"points":[{"subject":"...","claim":"...","why":"..."}]}')
+        answer = model_answer(system, "UNSUPPORTED NUMBERS: " + ", ".join(sorted(missing)) +
+                              "\nPOINT: " + json.dumps(point) + "\nSPEECH:\n" + excerpt, limit=350)
+        points[index] = read_report_points(answer, 1, show)[0]
+        if numbers_in_text(points[index]["claim"] + " " + points[index]["why"]) - spoken:
+            raise RuntimeError("A number in " + show + " was not heard in the episode")
+    return points
+
+
+def episode_report(episode, speech, angle, count):
     if MODEL_URL and MODEL_NAME:
-        chosen = episodes[:min(count, len(episodes))]
-        allocations = [0] * len(chosen)
-        for index in range(count):
-            allocations[index % len(chosen)] += 1
-        buckets = []
-        for (episode, speech), wanted in zip(chosen, allocations):
-            notes = episode_notes(episode, speech)
-            system = ("Write exactly " + str(wanted) + " numbered lines about this podcast episode. "
-                      "Each line is at most 35 words and starts with a specific claim the speaker made, "
-                      "then says why it matters in real life. Attribute the claim to the speaker. "
-                      "Choose the main discussion, preferably a point reflected in the episode title or "
-                      "repeated through the episode. Ignore adverts, promotions and housekeeping. "
-                      "Avoid isolated shocking details; include a caveat when the speaker gives one. "
-                      "Keep the claim and consequence on the same topic; do not join unrelated notes. "
-                      "Do not call a claim proven or invent a motive. Preserve numbers exactly; a percentage "
-                      "below 50 is not a majority. No broad claim from one study. Plain words, no filler.")
-            prompt = ("SHOW: " + episode["show"] + "\nEPISODE: " + episode["title"] +
-                      "\nNOTES:\n" + "\n\n".join(notes))
-            answer = model_answer(system, prompt, limit=max(350, wanted * 110))
-            parsed = [re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", line).strip()
-                      for line in answer.splitlines() if line.strip()]
-            parsed = [line for line in parsed if line and not line.lower().startswith(
-                ("here are", "here is", "summary:"))]
-            if len(parsed) < wanted:
-                raise RuntimeError("Could not write the requested report lines for " + episode["show"])
-            buckets.append([episode["show"] + ": " + re.sub(
-                r"^" + re.escape(episode["show"]) + r":\s*", "", line, flags=re.IGNORECASE)
-                for line in parsed[:wanted]])
-        lines = []
-        while any(buckets):
-            for bucket in buckets:
-                if bucket:
-                    lines.append(bucket.pop(0))
-        system = ("Write one short line starting 'Cynic's view:'. Explain why a concrete point "
-                  "in this report matters from the owner's angle. Name a possible beneficiary or "
-                  "a specific fact worth checking. No rhetorical questions, fragments or generic warnings. "
-                  "Do not invent a beneficiary or attach a profit motive to a speaker merely because "
-                  "they described a problem. If no clear incentive appears, name the missing check. "
-                  "Any motive not proved must be a possibility using 'might' or 'could'. "
-                  "Do not add new factual claims. Plain words, at most 35 words.")
-        answer = model_answer(system, "OWNER'S ANGLE: " + (angle or "Be sceptical") +
-                              "\nREPORT:\n" + "\n".join(lines), limit=180)
-        cynic = re.sub(r"^\s*(?:\d+[.)]\s*)?Cynic(?:'s|’s)? view:\s*", "", answer,
-                       flags=re.IGNORECASE).splitlines()[0].strip()
-        if not cynic:
-            raise RuntimeError("Could not write the final sceptical line")
-        return lines, cynic
-    buckets = [extractive_points(episode, speech, limit=count) for episode, speech in episodes]
-    points = []
-    while len(points) < count and any(buckets):
-        for bucket in buckets:
-            if bucket and len(points) < count:
-                points.append(bucket.pop(0))
-    return points or ["No clear point was found in the available speech."], ""
+        notes = episode_notes(episode, speech)
+        system = ("Read notes from every part of this one podcast episode. Write exactly " + str(count) +
+                  " points about different subjects when the episode covers several subjects. "
+                  "Do not just take the first subject. Each point has a short subject, one specific "
+                  "claim attributed to its speaker, and a practical reason that claim matters. "
+                  "If the host and guest talk back and forth and the speaker is unclear, say "
+                  "'a speaker' rather than guessing which person said it. "
+                  "Prefer subjects named in the episode title when they are actually discussed. "
+                  "Each subject is at most four words, each claim at most 25 words, each reason "
+                  "at most 18 words. Use plain words; omit obscure test names. "
+                  "Keep each reason tied to its own claim. Ignore adverts, introductions and show news. "
+                  "If a result came from one study, a simulation, or a company's own test, say so "
+                  "and name who reported the number. Do not turn their claim into a general fact. "
+                  "Preserve numbers exactly. Spell out shortened terms. "
+                  "Return only a JSON object with this form: "
+                  '{"points":[{"subject":"...","claim":"...","why":"..."}]}')
+        prompt = "EPISODE: " + episode["title"] + "\nNOTES:\n" + "\n\n".join(notes)
+        answer = model_answer(system, prompt, limit=max(650, count * 175))
+        points = read_report_points(answer, count, episode["show"])
+        if any(len(point["claim"].split()) > 30 or len(point["why"].split()) > 22
+               for point in points):
+            shorter = model_answer("Shorten this report without changing any claim, number, caveat "
+                                   "or speaker. Keep the same separate subjects. Each claim at most "
+                                   "25 words and each reason at most 18 words. Return only the same "
+                                   'JSON form: {"points":[{"subject":"...","claim":"...","why":"..."}]}',
+                                   json.dumps({"points": points}), limit=max(650, count * 175))
+            points = read_report_points(shorter, count, episode["show"])
+        if any(len(point["claim"].split()) > 30 or len(point["why"].split()) > 22
+               for point in points):
+            raise RuntimeError("The points for " + episode["show"] + " were too long")
+        points = check_spoken_numbers(points, speech, episode["show"])
+        if any(len(point["claim"].split()) > 30 or len(point["why"].split()) > 22
+               for point in points):
+            raise RuntimeError("The checked points for " + episode["show"] + " were too long")
+        view = sceptical_view(points, angle)
+    else:
+        quotes = extractive_points(episode, speech, limit=count)
+        points = [{"subject": "What was said", "claim": quote.removeprefix(
+            episode["show"] + ": "), "why": ""} for quote in quotes]
+        view = ""
+    return {"show": episode["show"], "title": episode["title"],
+            "published": episode["published"], "url": episode["url"],
+            "points": points, "view": view}
+
+
+def report_message(sections, timezone_name):
+    day = datetime.now(ZoneInfo(timezone_name)).strftime("%d %B %Y")
+    blocks = ["Leave the Podcasts · " + day]
+    for section in sections:
+        lines = [section["show"] + " — " + section["title"]]
+        for number, point in enumerate(section["points"], 1):
+            line = str(number) + ". " + point["subject"] + ": " + point["claim"]
+            if point["why"]:
+                line += " Why it matters: " + point["why"]
+            lines.append(line)
+        if section["view"]:
+            lines.append("Cynic's view: " + section["view"])
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def episode_id(episode):
@@ -445,19 +539,18 @@ def report(config, progress=lambda stage: None):
         if not feeds_read and problems:
             raise RuntimeError("No podcast episode lists could be read. " + "; ".join(problems[:2]))
         return {"at": datetime.now(timezone.utc).isoformat(), "episodes": [], "usable": 0,
-                "used_ids": [], "lines": [], "cynic": "", "no_new": True,
+                "used_ids": [], "sections": [], "no_new": True,
                 "message": "No new episodes since the last report.", "problems": problems}
     if not readable:
         raise RuntimeError("No episode speech could be read. " + "; ".join(problems[:2]))
     count = config.get("lines", 3)
     progress("Writing the report")
-    lines, cynic = make_report_lines(readable, config.get("angle", ""), count)
-    day = datetime.now(ZoneInfo(config["timezone"])).strftime("%d %B %Y")
+    sections = [episode_report(episode, speech, config.get("angle", ""), count)
+                for episode, speech in readable]
     return {"at": datetime.now(timezone.utc).isoformat(), "episodes": selected, "usable": len(readable),
             "used_ids": sorted(episode_id(episode) for episode, _ in readable),
-            "lines": lines, "cynic": cynic, "no_new": False,
-            "message": "Leave the Podcasts · " + day + "\n" + "\n".join(lines) +
-                       ("\nCynic's view: " + cynic if cynic else ""),
+            "sections": sections, "no_new": False,
+            "message": report_message(sections, config["timezone"]),
             "problems": problems}
 
 
@@ -465,11 +558,28 @@ def send_telegram(message):
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("TELEGRAM_TEST_BOT_TOKEN", "")
     if not token or not TELEGRAM_CHAT:
         raise RuntimeError("Set your Telegram bot and chat number")
-    response = requests.post("https://api.telegram.org/bot" + token + "/sendMessage",
-                             json={"chat_id": TELEGRAM_CHAT, "text": message}, timeout=25)
-    response.raise_for_status()
-    if not response.json().get("ok"):
-        raise RuntimeError("Telegram refused the report")
+    pieces, current = [], ""
+    for line in message.splitlines():
+        if len(line) > 3900:
+            raise RuntimeError("A report line is too long to send")
+        candidate = current + ("\n" if current else "") + line
+        if len(candidate) > 3900:
+            pieces.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        pieces.append(current)
+    message_ids = []
+    for piece in pieces:
+        response = requests.post("https://api.telegram.org/bot" + token + "/sendMessage",
+                                 json={"chat_id": TELEGRAM_CHAT, "text": piece}, timeout=25)
+        response.raise_for_status()
+        answer = response.json()
+        if not answer.get("ok"):
+            raise RuntimeError("Telegram refused the report")
+        message_ids.append((answer.get("result") or {}).get("message_id"))
+    return message_ids
 
 
 def recent_preview(config):
@@ -503,7 +613,7 @@ def run(kind, automatic=False):
         result["sent"] = False
         if kind == "send":
             if not result.get("no_new"):
-                send_telegram(result["message"])
+                result["telegram_message_ids"] = send_telegram(result["message"])
                 retire_sent_episodes(result)
                 result["sent"] = True
             if result["sent"] or automatic:
