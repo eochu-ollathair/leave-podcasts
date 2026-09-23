@@ -13,7 +13,7 @@ import secrets
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,6 +31,8 @@ SETTINGS = DATA / "settings.json"
 LAST = DATA / "last_report.json"
 DELIVERY = DATA / "last_delivery.json"
 SENT_EPISODES = DATA / "sent_episodes.json"
+SENT_MESSAGES = DATA / "sent_messages.json"
+CHARTS = DATA / "charts"
 SOURCE_FILE = ROOT / "dist" / "leave-podcasts-source.zip"
 MODEL_URL = os.environ.get("PODCAST_MODEL_URL", "")
 MODEL_NAME = os.environ.get("PODCAST_MODEL", "")
@@ -50,7 +52,8 @@ def save_json(path, value):
 
 
 def defaults():
-    return {"shows": [], "lines": 3, "angle": "", "enabled": False,
+    return {"shows": [], "blocked_shows": [], "lines": 2, "trending_count": 3,
+            "angle": "", "enabled": False,
             "time": "08:00", "timezone": "Europe/Dublin"}
 
 
@@ -78,6 +81,17 @@ def validate(value):
         if feed not in seen:
             shows.append({"name": name, "feed": feed, "count": count})
             seen.add(feed)
+    blocked_shows = []
+    raw_blocked = value.get("blocked_shows", [])
+    if not isinstance(raw_blocked, list) or len(raw_blocked) > 100:
+        raise ValueError("Choose up to 100 podcasts to ignore")
+    for item in raw_blocked:
+        if not isinstance(item, dict):
+            raise ValueError("A podcast to ignore needs a name")
+        name = str(item.get("name", "")).strip()[:100]
+        feed = str(item.get("feed", "")).strip()[:1200]
+        if name and (not feed or urlparse(feed).scheme in ("http", "https")):
+            blocked_shows.append({"name": name, "feed": feed})
     send_time = str(value.get("time", "08:00"))
     if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", send_time):
         raise ValueError("Choose a valid morning time")
@@ -92,7 +106,15 @@ def validate(value):
         raise ValueError("Choose a whole number of points per podcast") from None
     if not 1 <= lines <= 20:
         raise ValueError("Choose 1 to 20 points per podcast")
-    return {"shows": shows, "lines": lines, "angle": str(value.get("angle", "")).strip()[:400],
+    try:
+        trending_count = int(value.get("trending_count", 3))
+    except (TypeError, ValueError):
+        raise ValueError("Choose a whole number of popular podcasts") from None
+    if not 0 <= trending_count <= 5:
+        raise ValueError("Choose 0 to 5 popular podcasts")
+    return {"shows": shows, "blocked_shows": blocked_shows,
+            "lines": lines, "trending_count": trending_count,
+            "angle": str(value.get("angle", "")).strip()[:400],
             "enabled": bool(value.get("enabled", False)), "time": send_time, "timezone": tz}
 
 
@@ -149,6 +171,70 @@ def search_shows(query):
             if x.get("feedUrl")]
 
 
+def chart_path(day):
+    return CHARTS / (day.isoformat() + ".json")
+
+
+def capture_chart(now=None):
+    now = now or datetime.now(ZoneInfo(settings()["timezone"]))
+    path = chart_path(now.date())
+    if path.exists():
+        previous = json.loads(path.read_text(encoding="utf-8"))
+        checked = datetime.fromisoformat(previous["checked_at"])
+        if checked.hour >= 23 or now.hour < 23:
+            return previous
+    response = requests.get("https://podcasts.apple.com/ie/charts/episodes", timeout=30,
+                            headers={"User-Agent": "Mozilla/5.0"})
+    response.raise_for_status()
+    if len(response.content) > 3_000_000 or "Trending Episodes" not in response.text:
+        raise RuntimeError("Ireland's popular podcast list could not be read")
+    links = re.findall(r'<a[^>]+data-testid="click-action"[^>]+href="(https://podcasts\.apple\.com/ie/podcast/[^\"]+\?i=\d+[^\"]*)"',
+                       response.text)
+    ranked, seen = [], set()
+    for link in links:
+        match = re.search(r"/id(\d+)\?i=(\d+)", html.unescape(link))
+        if match and match.group(2) not in seen:
+            ranked.append({"rank": len(ranked) + 1, "show_id": match.group(1),
+                           "episode_id": match.group(2), "url": html.unescape(link)})
+            seen.add(match.group(2))
+    if len(ranked) < 10:
+        raise RuntimeError("Ireland's popular podcast list did not contain enough episodes")
+    snapshot = {"day": now.date().isoformat(), "checked_at": now.isoformat(),
+                "source": "Apple Podcasts Ireland trending episodes", "ranked": ranked}
+    save_json(path, snapshot)
+    return snapshot
+
+
+def previous_chart(config):
+    today = datetime.now(ZoneInfo(config["timezone"]))
+    path = chart_path(today.date() - timedelta(days=1))
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return None
+
+
+def trending_episode(entry):
+    response = requests.get("https://itunes.apple.com/lookup",
+                            params={"id": entry["show_id"], "entity": "podcastEpisode",
+                                    "country": "ie", "limit": 200}, timeout=25)
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    show = next((x for x in results if x.get("kind") == "podcast" and x.get("feedUrl")), None)
+    listed = next((x for x in results if str(x.get("trackId")) == entry["episode_id"]), None)
+    if not show or not listed:
+        return None
+    name = show.get("collectionName", "").strip()
+    title = listed.get("trackName", "").strip()
+    if not name or not title:
+        return None
+    episodes = read_feed({"name": name, "feed": show["feedUrl"], "count": 100})
+    normal = lambda value: re.sub(r"[^a-z0-9]+", "", value.casefold())
+    matching = next((x for x in episodes if normal(x["title"]) == normal(title)), None)
+    if matching:
+        matching.update(chart_rank=entry["rank"], chart_url=entry["url"])
+    return matching
+
+
 def child_text(node, name):
     child = node.find(name)
     return clean_text(child.text if child is not None else "")
@@ -179,7 +265,7 @@ def read_feed(show):
             if urlparse(episode_url).scheme not in ("http", "https"):
                 episode_url = show["feed"]
             episodes.append({"show": show["name"], "title": title, "published": published,
-                             "url": episode_url,
+                             "url": episode_url, "feed": show["feed"],
                              "guid": child_text(item, "guid") or title + published,
                              "audio": audio.attrib.get("url", "") if audio is not None else "",
                              "transcripts": transcripts})
@@ -371,19 +457,19 @@ def sceptical_view(points, angle):
               "Do not guess why any law or action happened. Do not invent beneficiaries, people, "
               "products or transactions. Do not say one result settles a broad question. "
               "Do not discuss other podcasts or ask a question. Use ordinary words, no shortened "
-              "terms or vague phrases like 'more evidence'. At most 35 words.")
+              "terms or vague phrases like 'more evidence'. At most 14 words.")
     answer = model_answer(system, "OWNER'S ANGLE: " + (angle or "Be sceptical") +
                           "\nTHIS PODCAST'S POINTS:\n" + json.dumps(focus_points), limit=180)
     view = plain_report_words(re.sub(r"^\s*(?:Cynic(?:'s|’s)? view:\s*)?", "", answer,
                                      flags=re.IGNORECASE).splitlines()[0] if answer else "")
     if not view:
         raise RuntimeError("Could not write the sceptical view")
-    if len(view.split()) > 35:
-        shorter = model_answer("Shorten this to one sentence of at most 30 words. Keep the "
+    if len(view.split()) > 18:
+        shorter = model_answer("Shorten this to one sentence of at most 14 words. Keep the "
                                "specific subject and exact check or named recipient. Do not add "
                                "a motive or new fact.", view, limit=100)
         view = plain_report_words(shorter.splitlines()[0] if shorter else "")
-    if len(view.split()) > 35:
+    if len(view.split()) > 18:
         raise RuntimeError("The sceptical view was too long")
     return view
 
@@ -392,8 +478,9 @@ def read_report_points(answer, count, show):
     try:
         parsed = json.loads(answer[answer.index("{"):answer.rindex("}") + 1])
         raw_points = parsed["points"]
-        if len(raw_points) != count:
+        if not isinstance(raw_points, list) or len(raw_points) < count:
             raise ValueError("wrong number of points")
+        raw_points = raw_points[:count]
         points = [{key: plain_report_words(str(item[key])) for key in
                    ("subject", "claim", "why")} for item in raw_points]
         if any(not all(point.values()) for point in points):
@@ -420,7 +507,8 @@ def check_spoken_numbers(points, speech, show):
         excerpt = speech[max(0, location - 1500):location + 7000]
         system = ("Rewrite this ONE point using the original speech. The listed numbers were "
                   "not found in the speech and must be removed or replaced by the exact spoken "
-                  "amounts. Keep the same subject and practical reason. Do not calculate a new "
+                  "amounts. Keep the claim within 16 words and the reason within 6 words. "
+                  "Keep the same subject and practical reason. Do not calculate a new "
                   "price or percentage. Return only JSON in this form: "
                   '{"points":[{"subject":"...","claim":"...","why":"..."}]}')
         answer = model_answer(system, "UNSUPPORTED NUMBERS: " + ", ".join(sorted(missing)) +
@@ -431,18 +519,45 @@ def check_spoken_numbers(points, speech, show):
     return points
 
 
+def title_speech(episode, speech):
+    """Use the part of a popular episode that actually discusses its title."""
+    title_words = {word.casefold() for word in re.findall(r"[A-Za-z]{5,}", episode["title"])
+                   if word.casefold() not in {"episode", "extra", "about", "there", "their",
+                                              "after", "before", "part", "today", "podcast"}}
+    if len(title_words) < 2:
+        return ""
+    candidates = []
+    for word in title_words:
+        for match in list(re.finditer(r"\b" + re.escape(word) + r"\b", speech, re.I))[:12]:
+            start = max(0, match.start() - 1300)
+            end = min(len(speech), match.end() + 4000)
+            excerpt = speech[start:end]
+            present = sum(bool(re.search(r"\b" + re.escape(term) + r"\b", excerpt, re.I))
+                          for term in title_words)
+            candidates.append((present, start, excerpt))
+    if not candidates:
+        return ""
+    best = max(candidates, key=lambda item: (item[0], -item[1]))
+    return best[2] if best[0] >= 2 else ""
+
+
 def episode_report(episode, speech, angle, count):
     if MODEL_URL and MODEL_NAME:
-        notes = episode_notes(episode, speech)
+        focus = title_speech(episode, speech) if episode.get("chart_rank") and count == 1 else ""
+        notes = ["Speech about the title:\n" + focus] if focus else episode_notes(episode, speech)
         system = ("Read notes from every part of this one podcast episode. Write exactly " + str(count) +
                   " points about different subjects when the episode covers several subjects. "
                   "Do not just take the first subject. Each point has a short subject, one specific "
-                  "claim attributed to its speaker, and a practical reason that claim matters. "
-                  "If the host and guest talk back and forth and the speaker is unclear, say "
-                  "'a speaker' rather than guessing which person said it. "
+                  "claim heard in the episode, and a practical reason that claim matters. "
+                  "Do not name a speaker or guest in the claim: speech text does not reliably "
+                  "identify which voice said which words. Attribute an outside study or company "
+                  "when the episode names that source. "
+                  "For one popular episode point, cover the situation named in its title "
+                  "when that situation appears in the supplied speech. Do not choose a side topic. "
                   "Prefer subjects named in the episode title when they are actually discussed. "
-                  "Each subject is at most four words, each claim at most 25 words, each reason "
-                  "at most 18 words. Use plain words; omit obscure test names. "
+                  "Each subject is at most three words, each claim at most 16 words, each reason "
+                  "at most 6 words. This is a two-minute morning report. Keep necessary caveats "
+                  "and speaker names even when shortening. Use plain words; omit obscure test names. "
                   "Keep each reason tied to its own claim. Ignore adverts, introductions and show news. "
                   "If a result came from one study, a simulation, or a company's own test, say so "
                   "and name who reported the number. Do not turn their claim into a general fact. "
@@ -451,20 +566,27 @@ def episode_report(episode, speech, angle, count):
                   '{"points":[{"subject":"...","claim":"...","why":"..."}]}')
         prompt = "EPISODE: " + episode["title"] + "\nNOTES:\n" + "\n\n".join(notes)
         answer = model_answer(system, prompt, limit=max(650, count * 175))
-        points = read_report_points(answer, count, episode["show"])
-        if any(len(point["claim"].split()) > 30 or len(point["why"].split()) > 22
+        try:
+            points = read_report_points(answer, count, episode["show"])
+        except RuntimeError:
+            answer = model_answer("Rewrite this as valid JSON with exactly " + str(count) +
+                                  " points, each with subject, claim and why. Preserve the "
+                                  "original claims and caveats. Add no new facts or numbers.",
+                                  answer, limit=max(350, count * 150))
+            points = read_report_points(answer, count, episode["show"])
+        if any(len(point["claim"].split()) > 18 or len(point["why"].split()) > 8
                for point in points):
             shorter = model_answer("Shorten this report without changing any claim, number, caveat "
                                    "or speaker. Keep the same separate subjects. Each claim at most "
-                                   "25 words and each reason at most 18 words. Return only the same "
+                                   "16 words and each reason at most 6 words. Return only the same "
                                    'JSON form: {"points":[{"subject":"...","claim":"...","why":"..."}]}',
                                    json.dumps({"points": points}), limit=max(650, count * 175))
             points = read_report_points(shorter, count, episode["show"])
-        if any(len(point["claim"].split()) > 30 or len(point["why"].split()) > 22
+        if any(len(point["claim"].split()) > 18 or len(point["why"].split()) > 8
                for point in points):
             raise RuntimeError("The points for " + episode["show"] + " were too long")
         points = check_spoken_numbers(points, speech, episode["show"])
-        if any(len(point["claim"].split()) > 30 or len(point["why"].split()) > 22
+        if any(len(point["claim"].split()) > 25 or len(point["why"].split()) > 12
                for point in points):
             raise RuntimeError("The checked points for " + episode["show"] + " were too long")
         view = sceptical_view(points, angle)
@@ -475,21 +597,27 @@ def episode_report(episode, speech, angle, count):
         view = ""
     return {"show": episode["show"], "title": episode["title"],
             "published": episode["published"], "url": episode["url"],
-            "points": points, "view": view}
+            "feed": episode["feed"],
+            "points": points, "view": view,
+            "chart_rank": episode.get("chart_rank"), "chart_day": episode.get("chart_day")}
 
 
 def report_message(sections, timezone_name):
     day = datetime.now(ZoneInfo(timezone_name)).strftime("%d %B %Y")
     blocks = ["Leave the Podcasts · " + day]
     for section in sections:
-        lines = [section["show"] + " — " + section["title"]]
+        heading = section["show"] + " — " + section["title"]
+        if section.get("chart_rank"):
+            heading = ("Ireland popular list " + section["chart_day"] +
+                       ", number " + str(section["chart_rank"]) + ": " + heading)
+        lines = [heading]
         for number, point in enumerate(section["points"], 1):
-            line = str(number) + ". " + point["subject"] + ": " + point["claim"]
+            line = str(number) + ". " + point["claim"]
             if point["why"]:
-                line += " Why it matters: " + point["why"]
+                line += " Why: " + point["why"]
             lines.append(line)
         if section["view"]:
-            lines.append("Cynic's view: " + section["view"])
+            lines.append("Cynic: " + section["view"])
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -517,8 +645,16 @@ def retire_sent_episodes(result):
 def report(config, progress=lambda stage: None):
     selected, readable, problems = [], [], []
     already_sent = sent_episode_ids()
+    chosen_ids = set()
     feeds_read = 0
+    def ignored(show):
+        return any((item.get("feed") and item["feed"] == show["feed"]) or
+                   item["name"].casefold() == show["name"].casefold()
+                   for item in config.get("blocked_shows", []))
+
     for show in config["shows"]:
+        if ignored(show):
+            continue
         progress("Finding episodes from " + show["name"])
         try:
             episodes = read_feed(show)
@@ -527,14 +663,42 @@ def report(config, progress=lambda stage: None):
             problems.append(show["name"] + ": " + str(exc)[:120])
             continue
         for episode in episodes:
-            if episode_id(episode) in already_sent:
+            if episode_id(episode) in already_sent or episode_id(episode) in chosen_ids:
                 continue
             selected.append({key: episode[key] for key in ("show", "title", "published", "url")})
             progress("Reading " + episode["title"][:50])
             try:
                 readable.append((episode, speech_for(episode)))
+                chosen_ids.add(episode_id(episode))
             except Exception as exc:
                 problems.append(episode["title"] + ": " + str(exc)[:120])
+    wanted = config.get("trending_count", 3)
+    if wanted:
+        try:
+            chart = previous_chart(config) or capture_chart()
+        except Exception as exc:
+            chart = None
+            problems.append("Ireland's popular list: " + str(exc)[:120])
+        if chart:
+            progress("Finding podcasts from Ireland's popular list, " + chart["day"])
+        found = 0
+        for entry in (chart["ranked"][:20] if chart else []):
+            if found >= wanted:
+                break
+            try:
+                episode = trending_episode(entry)
+                if not episode or ignored({"name": episode["show"], "feed": episode["feed"]}) \
+                        or episode_id(episode) in already_sent or episode_id(episode) in chosen_ids:
+                    continue
+                episode["chart_day"] = chart["day"]
+                progress("Reading popular episode " + str(entry["rank"]))
+                speech = speech_for(episode)
+                selected.append({key: episode[key] for key in ("show", "title", "published", "url")})
+                readable.append((episode, speech))
+                chosen_ids.add(episode_id(episode))
+                found += 1
+            except Exception as exc:
+                problems.append("Popular list number " + str(entry["rank"]) + ": " + str(exc)[:120])
     if not selected:
         if not feeds_read and problems:
             raise RuntimeError("No podcast episode lists could be read. " + "; ".join(problems[:2]))
@@ -545,10 +709,19 @@ def report(config, progress=lambda stage: None):
         raise RuntimeError("No episode speech could be read. " + "; ".join(problems[:2]))
     count = config.get("lines", 3)
     progress("Writing the report")
-    sections = [episode_report(episode, speech, config.get("angle", ""), count)
-                for episode, speech in readable]
-    return {"at": datetime.now(timezone.utc).isoformat(), "episodes": selected, "usable": len(readable),
-            "used_ids": sorted(episode_id(episode) for episode, _ in readable),
+    sections, used_ids, reported = [], [], []
+    for episode, speech in readable:
+        try:
+            sections.append(episode_report(episode, speech, config.get("angle", ""),
+                                           1 if episode.get("chart_rank") else count))
+            used_ids.append(episode_id(episode))
+            reported.append({key: episode[key] for key in ("show", "title", "published", "url")})
+        except Exception as exc:
+            problems.append(episode["title"] + ": " + str(exc)[:120])
+    if not sections:
+        raise RuntimeError("No episode report could be written. " + "; ".join(problems[:2]))
+    return {"at": datetime.now(timezone.utc).isoformat(), "episodes": reported, "usable": len(sections),
+            "used_ids": used_ids,
             "sections": sections, "no_new": False,
             "message": report_message(sections, config["timezone"]),
             "problems": problems}
@@ -613,7 +786,17 @@ def run(kind, automatic=False):
         result["sent"] = False
         if kind == "send":
             if not result.get("no_new"):
-                result["telegram_message_ids"] = send_telegram(result["message"])
+                sent = []
+                mapping = json.loads(SENT_MESSAGES.read_text(encoding="utf-8")) if SENT_MESSAGES.exists() else {}
+                for section, used_id in zip(result["sections"], result["used_ids"]):
+                    ids = send_telegram(report_message([section], config["timezone"]))
+                    sent.extend(ids)
+                    for message_id in ids:
+                        mapping[str(message_id)] = {"kind": "podcast", "name": section["show"],
+                                                    "feed": section["feed"]}
+                    save_json(SENT_MESSAGES, dict(list(mapping.items())[-200:]))
+                    save_json(SENT_EPISODES, {"ids": sorted(sent_episode_ids() | {used_id})})
+                result["telegram_message_ids"] = sent
                 retire_sent_episodes(result)
                 result["sent"] = True
             if result["sent"] or automatic:
@@ -719,7 +902,10 @@ def save_settings():
         abort(403)
     try:
         value = validate(request.get_json(force=True))
-        save_json(SETTINGS, value)
+        DATA.mkdir(parents=True, exist_ok=True)
+        with (DATA / "settings.lock").open("a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            save_json(SETTINGS, value)
         return jsonify(settings=value)
     except (ValueError, TypeError) as exc:
         return jsonify(error=str(exc)), 400
@@ -740,7 +926,7 @@ def run_web(kind):
 
 
 def daily_due(config):
-    if not config["enabled"] or not config["shows"]:
+    if not config["enabled"] or (not config["shows"] and not config.get("trending_count", 3)):
         return False
     now = datetime.now(ZoneInfo(config["timezone"]))
     if now.strftime("%H:%M") < config["time"]:
@@ -752,8 +938,14 @@ def daily_due(config):
 
 def daily_loop():
     while True:
+        config = settings()
         try:
-            if daily_due(settings()):
+            if config.get("trending_count", 3):
+                capture_chart(datetime.now(ZoneInfo(config["timezone"])))
+        except Exception as exc:
+            print("Ireland's popular podcast list could not be saved: " + str(exc)[:200], flush=True)
+        try:
+            if daily_due(config):
                 run("send", automatic=True)
         except Exception as exc:
             print("Morning podcast report could not be sent: " + str(exc)[:200], flush=True)
@@ -769,6 +961,8 @@ def main():
     if args.mode == "serve":
         if os.environ.get("PODCAST_EMBEDDED_DAILY") == "1":
             threading.Thread(target=daily_loop, daemon=True).start()
+        from telegram_replies import start_listener
+        start_listener("podcast", ROOT)
         app.run(host=args.host, port=args.port)
     elif args.mode != "daily" or daily_due(settings()):
         result = run("send" if args.mode in ("send", "daily") else "preview",

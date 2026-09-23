@@ -114,7 +114,7 @@ def main():
     key = opening_key()
     environment = os.environ.copy()
     environment.update(TELEGRAM_BOT_TOKEN=saved["token"], TELEGRAM_CHAT_ID=saved["chat"],
-                       PODCAST_EMBEDDED_DAILY="1",
+                       PODCAST_EMBEDDED_DAILY="1", LEAVE_REPLIES="1",
                        PATH=str(VENV / "bin") + os.pathsep + environment.get("PATH", ""))
     port = int(os.environ.get("LEAVE_PODCASTS_START_PORT", "19134"))
     if not 1 <= port <= 65535:

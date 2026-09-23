@@ -12,7 +12,7 @@
 </head>
 <body><main>
   <div class="top">Leave the Podcasts</div><h1>Hours of talk.<br>A few useful lines.</h1>
-  <p class="lead">Pick podcasts and how many points to get from each one. See what they said, why each point matters, and your sceptical take beneath that podcast.</p>
+  <p class="lead">Your chosen podcasts, plus episodes popular in Ireland yesterday. A short morning read: what was said, why it matters, and your sceptical take.</p>
   <div class="layout"><div>
     <section class="card"><h2>Find a podcast</h2><p class="small">Search by its name, then add it to your list.</p>
       <div class="row"><input class="search" id="query" style="flex:1" placeholder="Podcast name"><button id="search">Search</button></div>
@@ -21,19 +21,21 @@
     <section class="card"><h2>Your podcasts</h2><div id="shows"></div>
       <p class="small">If a podcast is missing from search, paste the link to its episode list.</p>
       <div class="row"><input id="feedName" style="flex:1;min-width:150px" placeholder="Podcast name"><input id="feedUrl" style="flex:2;min-width:220px" placeholder="Link to its episodes"><button id="addFeed">Add</button></div>
+      <h3 style="margin-top:18px">Podcasts to ignore</h3><div id="blockedShows"></div>
     </section>
     <section class="card"><h2>Your angle</h2><p class="small">Your sceptical take goes beneath each podcast. Possible motives stay labelled as guesses.</p><textarea id="angle" maxlength="400" rows="3" placeholder="Why does this matter from a cynic's point of view? Look for who benefits, what is missing, and what the speaker may want."></textarea></section>
     <section class="card"><h2>Your report</h2><div id="report" class="three small">Make a preview to see the report here.</div><div id="episodes"></div></section>
   </div><div class="aside">
     <section class="card"><h2>Delivery</h2><label><input id="enabled" type="checkbox" style="width:auto;min-height:auto"> Send to Telegram each morning</label>
-      <label for="lineCount">Points from each podcast</label><input id="lineCount" type="number" min="1" max="20" value="3" style="width:110px">
+      <label for="trendingCount">Popular episodes from Ireland each morning</label><input id="trendingCount" type="number" min="0" max="5" value="3" style="width:110px"><p class="small">The list is saved the evening before. Choose zero to leave these out.</p>
+      <label for="lineCount">Points from each chosen podcast</label><input id="lineCount" type="number" min="1" max="20" value="2" style="width:110px"><p class="small">Popular episodes get one point each, to keep the whole message near two minutes.</p>
       <label for="time">Morning time</label><input id="time" type="time" value="08:00">
       <label for="timezone">Time zone</label><input id="timezone" value="Europe/Dublin">
       <div class="actions" style="margin-top:16px"><button id="save" class="primary">Save choices</button><button id="preview">Make preview</button><button id="send">Send to Telegram now</button></div>
       <p id="status" class="small" style="margin-top:13px">Ready.</p>
     </section>
   </div></div>
-  <p class="small" style="margin-top:24px">If an episode has no written speech, your computer turns its audio into words. Long episodes can take time. To check a claim, open the named episode and find the study or record the speaker cites.</p>
+  <p class="small" style="margin-top:24px">Reply to one podcast message in Telegram with “kill that podcast”, or send “add podcast” followed by its full name. If an episode has no written speech, your computer turns its audio into words. Long episodes can take time. To check a claim, open the named episode and find the study or record the speaker cites.</p>
 </main>
 <script>
 const BASE={{ base|tojson }};let choices=null,pending=false;
@@ -45,12 +47,13 @@ function renderShows(){
   document.querySelectorAll('[data-count]').forEach(e=>e.onchange=()=>{choices.shows[Number(e.dataset.count)].count=Number(e.value)});
   document.querySelectorAll('[data-remove]').forEach(e=>e.onclick=()=>{choices.shows.splice(Number(e.dataset.remove),1);renderShows()});
 }
+function renderBlocked(){const blocked=choices.blocked_shows||[];$('#blockedShows').innerHTML=blocked.length?blocked.map((s,i)=>`<div class="show">${esc(s.name)} <button data-unblock="${i}">Allow again</button></div>`).join(''):'<p class="small">None.</p>';document.querySelectorAll('[data-unblock]').forEach(e=>e.onclick=()=>{choices.blocked_shows.splice(Number(e.dataset.unblock),1);renderBlocked();say('Press Save choices to keep this change.')})}
 function addShow(name,feed){if(!choices.shows.some(s=>s.feed===feed)){choices.shows.push({name,feed,count:1});renderShows();say(name+' added. Save choices to keep it.')}}
 function renderReport(last){
   const sections=last?.sections||[];
   if(sections.length){
     $('#report').className='three';
-    $('#report').innerHTML=sections.map(s=>`<div class="report-show"><h3>${esc(s.show)}</h3><div class="small"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></div>${s.points.map((p,i)=>`<div class="report-point"><strong>${i+1}. ${esc(p.subject)}:</strong> ${esc(p.claim)}${p.why?`<span class="reason"><strong>Why it matters:</strong> ${esc(p.why)}</span>`:''}</div>`).join('')}${s.view?`<div class="report-view"><strong>Cynic's view:</strong> ${esc(s.view)}</div>`:''}</div>`).join('');
+    $('#report').innerHTML=sections.map(s=>`<div class="report-show"><h3>${esc(s.show)}</h3>${s.chart_rank?`<div class="small">Ireland popular list ${esc(s.chart_day)}, number ${esc(s.chart_rank)}</div>`:''}<div class="small"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></div>${s.points.map((p,i)=>`<div class="report-point"><strong>${i+1}. ${esc(p.subject)}:</strong> ${esc(p.claim)}${p.why?`<span class="reason"><strong>Why it matters:</strong> ${esc(p.why)}</span>`:''}</div>`).join('')}${s.view?`<div class="report-view"><strong>Cynic's view:</strong> ${esc(s.view)}</div>`:''}</div>`).join('');
   }else{
   const hasLines=Array.isArray(last?.lines)&&last.lines.length>0;
   $('#report').className=hasLines?'three':'three small';
@@ -58,8 +61,8 @@ function renderReport(last){
   }
   $('#episodes').innerHTML=(last?.episodes?.length?'<h3 style="margin-top:17px">Episodes checked</h3>'+last.episodes.map(e=>`<div class="episode"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title)}</a><div class="small">${esc(e.show)} · ${esc(e.published)}</div></div>`).join(''):'')+(last?.problems?.length?'<h3 style="margin-top:17px">Could not read</h3>'+last.problems.map(x=>`<div class="small error">${esc(x)}</div>`).join(''):'');
 }
-async function load(){const r=await fetch(BASE+'/api/status',{credentials:'same-origin'});if(!r.ok)throw Error('Could not open your settings');const d=await r.json();if(!choices){choices=d.settings;$('#angle').value=choices.angle||'';$('#lineCount').value=choices.lines??3;$('#time').value=choices.time;$('#timezone').value=choices.timezone;$('#enabled').checked=choices.enabled;renderShows()}renderReport(d.last);if(d.job.running){pending=true;say(d.job.stage+'…');setTimeout(load,3000)}else if(pending){pending=false;say(d.job.error||d.job.stage||'Finished.',!!d.job.error)}else if(d.job.error){say(d.job.error,true)}document.querySelectorAll('#preview,#send').forEach(b=>b.disabled=d.job.running)}
-async function save(){choices.angle=$('#angle').value.trim();choices.lines=Number($('#lineCount').value);choices.time=$('#time').value;choices.timezone=$('#timezone').value.trim();choices.enabled=$('#enabled').checked;const r=await fetch(BASE+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Podcast-Action':'yes'},credentials:'same-origin',body:JSON.stringify(choices)});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not save');choices=d.settings;return d}
+async function load(){const r=await fetch(BASE+'/api/status',{credentials:'same-origin'});if(!r.ok)throw Error('Could not open your settings');const d=await r.json();if(!choices){choices=d.settings;choices.blocked_shows??=[];$('#angle').value=choices.angle||'';$('#lineCount').value=choices.lines??2;$('#trendingCount').value=choices.trending_count??3;$('#time').value=choices.time;$('#timezone').value=choices.timezone;$('#enabled').checked=choices.enabled;renderShows();renderBlocked()}renderReport(d.last);if(d.job.running){pending=true;say(d.job.stage+'…');setTimeout(load,3000)}else if(pending){pending=false;say(d.job.error||d.job.stage||'Finished.',!!d.job.error)}else if(d.job.error){say(d.job.error,true)}document.querySelectorAll('#preview,#send').forEach(b=>b.disabled=d.job.running)}
+async function save(){choices.angle=$('#angle').value.trim();choices.lines=Number($('#lineCount').value);choices.trending_count=Number($('#trendingCount').value);choices.time=$('#time').value;choices.timezone=$('#timezone').value.trim();choices.enabled=$('#enabled').checked;const r=await fetch(BASE+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Podcast-Action':'yes'},credentials:'same-origin',body:JSON.stringify(choices)});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not save');choices=d.settings;return d}
 async function run(kind){try{await save();const r=await fetch(BASE+'/api/run/'+kind,{method:'POST',headers:{'X-Podcast-Action':'yes'},credentials:'same-origin'});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not start');pending=true;say(kind==='send'?'Reading and sending…':'Reading episodes…');setTimeout(load,1000)}catch(e){say(e.message,true)}}
 $('#search').onclick=async()=>{const q=$('#query').value.trim();if(q.length<2)return;$('#results').textContent='Searching…';try{const r=await fetch(BASE+'/api/search?q='+encodeURIComponent(q));const d=await r.json();if(!r.ok)throw Error(d.error||'Search failed');$('#results').innerHTML=d.results.length?d.results.map((x,i)=>`<div class="result"><strong>${esc(x.name)}</strong><div class="small">${esc(x.maker)}</div><button data-add="${i}">Add podcast</button></div>`).join(''):'No matches found.';document.querySelectorAll('[data-add]').forEach(e=>e.onclick=()=>{const x=d.results[Number(e.dataset.add)];addShow(x.name,x.feed)})}catch(e){$('#results').textContent=e.message}};
 $('#query').onkeydown=e=>{if(e.key==='Enter')$('#search').click()};
