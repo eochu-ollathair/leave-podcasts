@@ -344,31 +344,53 @@ def extractive_points(episode, speech, limit=3):
 
 def make_report_lines(episodes, angle="", count=3):
     if MODEL_URL and MODEL_NAME:
-        notes = []
-        for episode, speech in episodes:
-            notes.extend(episode_notes(episode, speech))
-        final_number = count + 1
-        system = ("Write EXACTLY " + str(final_number) + " numbered lines, each at most 35 words. "
-                  "Lines 1 to " + str(count) + " each give one specific claim and why it matters. "
-                  "Include each readable podcast at least once when there are enough lines, in the order "
-                  "listed. If there are more podcasts than lines, pick the strongest distinct claims. "
-                  "Ignore advertisements, promotions, and show housekeeping. Choose the main discussion. "
-                  "Never invent a missing show. Attribute each claim. Line " + str(final_number) +
-                  " starts 'Cynic's view:' and applies the owner's angle at the end: "
-                  "explain the practical importance, who might benefit, or what evidence is missing. "
-                  "A possible hidden motive must say 'might', 'could', or be a question, never a fact. "
-                  "Preserve numbers exactly; a percentage below 50 is not a majority. Never guess what "
-                  "unclear speech means. Do not invent facts. Use plain words and no filler.")
-        prompt = "OWNER'S ANGLE: " + (angle or "No special angle") + "\nNOTES:\n" + "\n\n".join(notes)
-        answer = model_answer(system, prompt, limit=max(550, min(2400, final_number * 110)))
-        numbered = {}
-        for line in answer.splitlines():
-            match = re.match(r"^\s*(\d+)[.)]\s*(.+)", line)
-            if match:
-                numbered[int(match.group(1))] = match.group(2).strip()
-        if all(index in numbered for index in range(1, final_number + 1)):
-            cynic = re.sub(r"^Cynic(?:'s|’s)? view:\s*", "", numbered[final_number], flags=re.IGNORECASE)
-            return [numbered[index] for index in range(1, final_number)], cynic
+        chosen = episodes[:min(count, len(episodes))]
+        allocations = [0] * len(chosen)
+        for index in range(count):
+            allocations[index % len(chosen)] += 1
+        buckets = []
+        for (episode, speech), wanted in zip(chosen, allocations):
+            notes = episode_notes(episode, speech)
+            system = ("Write exactly " + str(wanted) + " numbered lines about this podcast episode. "
+                      "Each line is at most 35 words and starts with a specific claim the speaker made, "
+                      "then says why it matters in real life. Attribute the claim to the speaker. "
+                      "Choose the main discussion, preferably a point reflected in the episode title or "
+                      "repeated through the episode. Ignore adverts, promotions and housekeeping. "
+                      "Avoid isolated shocking details; include a caveat when the speaker gives one. "
+                      "Keep the claim and consequence on the same topic; do not join unrelated notes. "
+                      "Do not call a claim proven or invent a motive. Preserve numbers exactly; a percentage "
+                      "below 50 is not a majority. No broad claim from one study. Plain words, no filler.")
+            prompt = ("SHOW: " + episode["show"] + "\nEPISODE: " + episode["title"] +
+                      "\nNOTES:\n" + "\n\n".join(notes))
+            answer = model_answer(system, prompt, limit=max(350, wanted * 110))
+            parsed = [re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", line).strip()
+                      for line in answer.splitlines() if line.strip()]
+            parsed = [line for line in parsed if line and not line.lower().startswith(
+                ("here are", "here is", "summary:"))]
+            if len(parsed) < wanted:
+                raise RuntimeError("Could not write the requested report lines for " + episode["show"])
+            buckets.append([episode["show"] + ": " + re.sub(
+                r"^" + re.escape(episode["show"]) + r":\s*", "", line, flags=re.IGNORECASE)
+                for line in parsed[:wanted]])
+        lines = []
+        while any(buckets):
+            for bucket in buckets:
+                if bucket:
+                    lines.append(bucket.pop(0))
+        system = ("Write one short line starting 'Cynic's view:'. Explain why a concrete point "
+                  "in this report matters from the owner's angle. Name a possible beneficiary or "
+                  "a specific fact worth checking. No rhetorical questions, fragments or generic warnings. "
+                  "Do not invent a beneficiary or attach a profit motive to a speaker merely because "
+                  "they described a problem. If no clear incentive appears, name the missing check. "
+                  "Any motive not proved must be a possibility using 'might' or 'could'. "
+                  "Do not add new factual claims. Plain words, at most 35 words.")
+        answer = model_answer(system, "OWNER'S ANGLE: " + (angle or "Be sceptical") +
+                              "\nREPORT:\n" + "\n".join(lines), limit=180)
+        cynic = re.sub(r"^\s*(?:\d+[.)]\s*)?Cynic(?:'s|’s)? view:\s*", "", answer,
+                       flags=re.IGNORECASE).splitlines()[0].strip()
+        if not cynic:
+            raise RuntimeError("Could not write the final sceptical line")
+        return lines, cynic
     buckets = [extractive_points(episode, speech, limit=count) for episode, speech in episodes]
     points = []
     while len(points) < count and any(buckets):
