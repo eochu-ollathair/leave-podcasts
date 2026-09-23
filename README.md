@@ -1,5 +1,11 @@
 # Leave the Podcasts — Get the information from each show
 
+## Let an AI assistant set it up for you
+
+Give the assistant this GitHub page and say: **“Read [AGENTS.md](AGENTS.md). Set up my own copy on my Mac or Linux computer, connect my Telegram bot, send a real test report, and fix anything that fails.”**
+
+Your part is to provide your own Telegram bot and let the assistant use that computer. It handles the download and setup. You do not need a paid artificial intelligence account. Keep the computer on for morning reports.
+
 ![A microphone and long podcast sound wave becoming three short lines](assets/github-hero.png)
 
 Choose podcasts and get a short Telegram report instead of listening for hours. Each morning it can also pick a few episodes from Ireland's popular podcast list, saved the evening before. The starting choice is three popular episodes, two points from each podcast you chose, and one point from each popular episode. Change all three numbers on the page. Each point says why it matters, with your own sceptical reading beneath that podcast. More points make the report longer than two minutes.
@@ -16,9 +22,7 @@ Eochu's live reports come from [@cuntz2_bot](https://t.me/cuntz2_bot). Open that
 
 If you download this program for yourself, the starter helps you create **your own** Telegram bot. Eochu's chat does not control your copy.
 
-## Give this to your own AI
-
-Send it this [project link](https://github.com/eochu-ollathair/leave-podcasts) and say: **“Read AGENTS.md and get my own copy working. Help me pick podcasts, make a real preview, and connect my Telegram. Show me what actually worked.”** The [assistant instructions](AGENTS.md) give it the exact checks. It should use your own accounts and keep your private details off GitHub.
+## What the free version does
 
 The free report quotes useful speech and needs no artificial intelligence account. If you connect an artificial intelligence program of your own, it can choose different subjects within each episode, say why each matters, and put your sceptical reading beneath each podcast. A suspected motive stays a possibility until checked against records or direct testimony. The maker's program is not available to other users.
 
