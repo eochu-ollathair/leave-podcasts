@@ -352,6 +352,7 @@ def make_report_lines(episodes, angle="", count=3):
                   "Lines 1 to " + str(count) + " each give one specific claim and why it matters. "
                   "Include each readable podcast at least once when there are enough lines, in the order "
                   "listed. If there are more podcasts than lines, pick the strongest distinct claims. "
+                  "Ignore advertisements, promotions, and show housekeeping. Choose the main discussion. "
                   "Never invent a missing show. Attribute each claim. Line " + str(final_number) +
                   " starts 'Cynic's view:' and applies the owner's angle at the end: "
                   "explain the practical importance, who might benefit, or what evidence is missing. "
