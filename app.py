@@ -451,32 +451,38 @@ def plain_report_words(value):
     return value.strip()
 
 
-def sceptical_view(points, angle):
-    money_points = [point for point in points if re.search(
-        r"\b(?:compensat\w*|paid|payment|profit\w*|received money)\b",
-        point["claim"], flags=re.IGNORECASE)]
-    focus_points = money_points or points
-    system = ("Write one short sceptical view beneath this podcast only. Choose ONE named subject "
-              "from its points. If a point explicitly names who received money or power, state "
-              "that visible benefit and the record that would confirm it. Otherwise name the "
-              "specific study, account or repeat test needed to check one claim. "
-              "Do not guess why any law or action happened. Do not invent beneficiaries, people, "
-              "products or transactions. Do not say one result settles a broad question. "
-              "Do not discuss other podcasts or ask a question. Use ordinary words, no shortened "
-              "terms or vague phrases like 'more evidence'. At most 14 words.")
+def sceptical_view(points, angle, title):
+    system = ("Write one sceptical interpretation beneath this podcast only. Choose ONE named "
+              "point. Say what that claim establishes and one important result it does not "
+              "settle; explain the practical difference for the person named. Do not just "
+              "repeat the point or its reason. Do not add a future action not named in the point. "
+              "If the claim says "
+              "'may' or 'potential', distinguish the possibility from the actual decision. "
+              "Do not claim a person was not heard or a fact was omitted from the whole episode; "
+              "you only have the short points. Do not guess a motive, profit or why someone "
+              "acted unless the point itself names a payment or gain. Do not merely say 'check "
+              "the records'. Use only people, events and places named in the point or episode "
+              "title. Do not invent a law, decision or institution. At most 22 words.")
     answer = model_answer(system, "OWNER'S ANGLE: " + (angle or "Be sceptical") +
-                          "\nTHIS PODCAST'S POINTS:\n" + json.dumps(focus_points), limit=180)
+                          "\nEPISODE TITLE: " + title +
+                          "\nTHIS PODCAST'S POINTS:\n" + json.dumps(points), limit=180)
     view = plain_report_words(re.sub(r"^\s*(?:Cynic(?:'s|’s)? view:\s*)?", "", answer,
                                      flags=re.IGNORECASE).splitlines()[0] if answer else "")
     if not view:
         raise RuntimeError("Could not write the sceptical view")
-    if len(view.split()) > 18:
-        shorter = model_answer("Shorten this to one sentence of at most 14 words. Keep the "
-                               "specific subject and exact check or named recipient. Do not add "
-                               "a motive or new fact.", view, limit=100)
+    risk_words = r"\b(?:assumes?|assumption|deliberat(?:e|ely)|outbid|legal|protection|order|prioriti[sz]ed|strategic|revenue|profit(?:s|ed)?|influence|motive|benefit(?:s|ed)?)\b"
+    source_words = json.dumps(points) + " " + title
+    if (len(view.split()) > 24 or re.search(r"\b(?:no record confirms|no evidence)\b", view, re.I)
+            or (re.search(risk_words, view, re.I) and not re.search(risk_words, source_words, re.I))):
+        shorter = model_answer("Rewrite this as one sentence of at most 20 words. Keep the "
+                               "specific subject and a concrete uncertainty. Remove guessed "
+                               "motives, profits or strategic reasons absent from the point. "
+                               "Do not claim records are absent without checking. Do not invent "
+                               "a new fact.", view, limit=100)
         view = plain_report_words(shorter.splitlines()[0] if shorter else "")
-    if len(view.split()) > 18:
-        raise RuntimeError("The sceptical view was too long")
+    if (len(view.split()) > 24 or re.search(r"\b(?:no record confirms|no evidence)\b", view, re.I)
+            or (re.search(risk_words, view, re.I) and not re.search(risk_words, source_words, re.I))):
+        raise RuntimeError("The sceptical view added an unsupported assumption")
     return view
 
 
@@ -525,6 +531,39 @@ def check_spoken_numbers(points, speech, show):
     return points
 
 
+def check_uncertain_claims(points, show, speech):
+    for index, point in enumerate(points):
+        uncertain = re.search(r"\b(?:may|might|could|possible|possibly|potential|perhaps)\b",
+                              point["claim"], re.I)
+        certain_effect = re.search(r"\b(?:must|will|guarantees?|determines|definitely)\b",
+                                   point["why"], re.I)
+        unsupported_obligation = re.search(r"\bmust\b", point["why"], re.I) and not re.search(
+            r"\bmust\b", point["claim"], re.I)
+        risky_terms = set(re.findall(r"\b(?:legal|protection|order|outbid|revenue|strategic|influence)\b",
+                                     point["why"], re.I))
+        unsupported_terms = {term for term in risky_terms if not re.search(
+            r"\b" + re.escape(term) + r"\b", speech, re.I)}
+        if (uncertain and certain_effect) or unsupported_obligation or unsupported_terms:
+            answer = model_answer("Keep this claim and subject unchanged. Rewrite only the "
+                                  "reason in eight words or fewer. The claim is uncertain, so "
+                                  "the reason must not promise a certain result or say anyone "
+                                  "must act unless the claim says so. Do not add a legal effect "
+                                  "or another fact that the claim does not state. "
+                                  'Return JSON: {"points":[{"subject":"...","claim":"...","why":"..."}]}',
+                                  json.dumps(point), limit=200)
+            rewritten = read_report_points(answer, 1, show)[0]
+            points[index] = {**point, "why": rewritten["why"]}
+            if re.search(r"\b(?:must|will|guarantees?|determines|definitely)\b",
+                         points[index]["why"], re.I) and not re.search(
+                             r"\bmust\b", points[index]["claim"], re.I):
+                raise RuntimeError("The reason for " + show + " overstated an uncertain claim")
+            if any(not re.search(r"\b" + re.escape(term) + r"\b", speech, re.I)
+                   for term in re.findall(r"\b(?:legal|protection|order|outbid|revenue|strategic|influence)\b",
+                                          points[index]["why"], re.I)):
+                raise RuntimeError("The reason for " + show + " added an unsupported fact")
+    return points
+
+
 def title_speech(episode, speech):
     """Use the part of a popular episode that actually discusses its title."""
     title_words = {word.casefold() for word in re.findall(r"[A-Za-z]{5,}", episode["title"])
@@ -547,6 +586,21 @@ def title_speech(episode, speech):
     return best[2] if best[0] >= 2 else ""
 
 
+def direct_consequence(points):
+    """Keep common uncertain outcomes from becoming invented consequences."""
+    for point in points:
+        claim = point["claim"].casefold()
+        if "no tickets" in claim and "fans" in claim:
+            point["why"] = "Those fans cannot attend that match."
+            return "No tickets exclude those fans; the match organiser should explain the allocation."
+        if ("residency" in claim or "visa" in claim) and (
+                "potential deportation" in claim or "possible deportation" in claim):
+            point["why"] = "Whether departure follows remains uncertain."
+            return ("Visa expiry makes deportation possible, not certain; "
+                    "an official removal decision would settle whether departure follows.")
+    return ""
+
+
 def episode_report(episode, speech, angle, count):
     if MODEL_URL and MODEL_NAME:
         focus = title_speech(episode, speech) if episode.get("chart_rank") and count == 1 else ""
@@ -562,7 +616,10 @@ def episode_report(episode, speech, angle, count):
                   "when that situation appears in the supplied speech. Do not choose a side topic. "
                   "Prefer subjects named in the episode title when they are actually discussed. "
                   "Each subject is at most three words, each claim at most 16 words, each reason "
-                  "at most 6 words. This is a two-minute morning report. Keep necessary caveats "
+                  "at most 8 words. Name an effect that follows directly from the claim, not "
+                  "a made-up next action. For example, no tickets means fans cannot attend; "
+                  "it does not mean they will travel anyway. If deportation is only possible, "
+                  "do not say departure is required. This is a two-minute morning report. Keep necessary caveats "
                   "and speaker names even when shortening. Use plain words; omit obscure test names. "
                   "Keep each reason tied to its own claim. Ignore adverts, introductions and show news. "
                   "If a result came from one study, a simulation, or a company's own test, say so "
@@ -580,22 +637,25 @@ def episode_report(episode, speech, angle, count):
                                   "original claims and caveats. Add no new facts or numbers.",
                                   answer, limit=max(350, count * 150))
             points = read_report_points(answer, count, episode["show"])
-        if any(len(point["claim"].split()) > 18 or len(point["why"].split()) > 8
+        if any(len(point["claim"].split()) > 18 or len(point["why"].split()) > 10
                for point in points):
             shorter = model_answer("Shorten this report without changing any claim, number, caveat "
                                    "or speaker. Keep the same separate subjects. Each claim at most "
-                                   "16 words and each reason at most 6 words. Return only the same "
+                                   "16 words and each reason at most 8 words. Return only the same "
                                    'JSON form: {"points":[{"subject":"...","claim":"...","why":"..."}]}',
                                    json.dumps({"points": points}), limit=max(650, count * 175))
             points = read_report_points(shorter, count, episode["show"])
-        if any(len(point["claim"].split()) > 18 or len(point["why"].split()) > 8
+        if any(len(point["claim"].split()) > 18 or len(point["why"].split()) > 10
                for point in points):
             raise RuntimeError("The points for " + episode["show"] + " were too long")
+        points = check_spoken_numbers(points, speech, episode["show"])
+        direct_view = direct_consequence(points)
+        points = check_uncertain_claims(points, episode["show"], speech)
         points = check_spoken_numbers(points, speech, episode["show"])
         if any(len(point["claim"].split()) > 25 or len(point["why"].split()) > 12
                for point in points):
             raise RuntimeError("The checked points for " + episode["show"] + " were too long")
-        view = sceptical_view(points, angle)
+        view = direct_view or sceptical_view(points, angle, episode["title"])
     else:
         quotes = extractive_points(episode, speech, limit=count)
         points = [{"subject": "What was said", "claim": quote.removeprefix(
