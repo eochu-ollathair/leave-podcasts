@@ -1,0 +1,4 @@
+Flask>=3.0,<4
+requests>=2.31,<3
+defusedxml>=0.7,<1
+faster-whisper>=1.2,<2

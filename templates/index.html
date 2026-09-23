@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Leave the Podcasts — Three lines instead of hours</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0c141b;--card:#17232c;--ink:#f1f7f6;--muted:#acc0c4;--line:#3a5059;--blue:#7feaf1;--gold:#f4c47d}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top right,#213747,var(--bg) 48%);color:var(--ink);font:16px/1.5 system-ui,sans-serif}main{max-width:1000px;margin:auto;padding:24px 18px 70px}h1{font-size:clamp(38px,8vw,67px);line-height:1.02;letter-spacing:-.05em;margin:10px 0 15px}h2{font-size:22px;margin:0 0 8px}h3{font-size:16px;margin:0}p{margin:0 0 12px}.lead{font-size:19px;color:var(--muted);max-width:650px}.layout{display:grid;grid-template-columns:1.5fr .8fr;gap:16px}.card{background:var(--card);border:1px solid var(--line);border-radius:17px;padding:20px;margin-top:16px}.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.small{color:var(--muted);font-size:13px}input,textarea{background:#0d1921;color:var(--ink);border:1px solid #516670;border-radius:9px;padding:11px;font:inherit;min-height:44px}input{width:100%}textarea{width:100%;resize:vertical}button{background:#30424a;border:1px solid #58717b;border-radius:9px;color:var(--ink);padding:11px 13px;min-height:44px;font:700 14px system-ui;cursor:pointer}button:hover{border-color:var(--blue)}button.primary{background:var(--blue);color:#082127;border-color:var(--blue)}button:disabled{opacity:.5;cursor:wait}.show,.result,.episode{border-top:1px solid var(--line);padding:12px 0}.show:first-child,.result:first-child,.episode:first-child{border-top:0}.show strong,.result strong{display:block}.three{white-space:pre-wrap;font-size:18px;line-height:1.55}.three span{display:block;padding:7px 0;border-top:1px solid var(--line)}.three span:first-child{border-top:0}.error{color:#ffb7a7}.top{font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--blue);font-weight:800}.aside{align-self:start;position:sticky;top:16px}label{font-weight:700;font-size:13px;display:block;margin:12px 0 6px}.actions{display:flex;gap:8px;flex-wrap:wrap}.tiny{width:75px}.short{width:130px}a{color:var(--blue)}
+    @media(max-width:760px){.layout{display:block}.aside{position:static}.card{padding:16px}.row input.search{flex-basis:100%}}
+  </style>
+</head>
+<body><main>
+  <div class="top">Leave the Podcasts</div><h1>Hours of talk.<br>Three useful lines.</h1>
+  <p class="lead">Pick podcasts. Read what they actually said, why it matters, and what their words may leave out.</p>
+  <div class="layout"><div>
+    <section class="card"><h2>Find a podcast</h2><p class="small">Search by its name, then add it to your list.</p>
+      <div class="row"><input class="search" id="query" style="flex:1" placeholder="Podcast name"><button id="search">Search</button></div>
+      <div id="results"></div>
+    </section>
+    <section class="card"><h2>Your podcasts</h2><div id="shows"></div>
+      <p class="small">If a podcast is missing from search, paste its feed address.</p>
+      <div class="row"><input id="feedName" style="flex:1;min-width:150px" placeholder="Podcast name"><input id="feedUrl" style="flex:2;min-width:220px" placeholder="Feed address"><button id="addFeed">Add</button></div>
+    </section>
+    <section class="card"><h2>Your angle</h2><p class="small">Say how to read the claims. Possible motives must be labelled as guesses.</p><textarea id="angle" maxlength="400" rows="3" placeholder="Be sceptical. Look for what is missing, who benefits, and what the speaker may want."></textarea></section>
+    <section class="card"><h2>Three lines</h2><div id="report" class="three small">Make a preview to see the report here.</div><div id="episodes"></div></section>
+  </div><div class="aside">
+    <section class="card"><h2>Delivery</h2><label><input id="enabled" type="checkbox" style="width:auto;min-height:auto"> Send to Telegram each morning</label>
+      <label for="time">Morning time</label><input id="time" type="time" value="08:00">
+      <label for="timezone">Time zone</label><input id="timezone" value="Europe/Dublin">
+      <div class="actions" style="margin-top:16px"><button id="save" class="primary">Save choices</button><button id="preview">Make preview</button><button id="send">Send to Telegram now</button></div>
+      <p id="status" class="small" style="margin-top:13px">Ready.</p>
+    </section>
+  </div></div>
+  <p class="small" style="margin-top:24px">If an episode has no published transcript, this app turns its audio into words on your own computer. Long episodes can take time. Spoken claims are not independently proven facts.</p>
+</main>
+<script>
+const BASE={{ base|tojson }};let choices=null,pending=false;
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const say=(message,error=false)=>{$('#status').textContent=message;$('#status').className=error?'small error':'small'};
+function renderShows(){
+  $('#shows').innerHTML=choices.shows.length?choices.shows.map((s,i)=>`<div class="show"><strong>${esc(s.name)}</strong><div class="row"><span class="small">Episodes to read</span><input class="tiny" data-count="${i}" type="number" min="1" max="3" value="${s.count}"><button data-remove="${i}">Remove</button></div></div>`).join(''):'<p class="small">No podcasts added yet.</p>';
+  document.querySelectorAll('[data-count]').forEach(e=>e.onchange=()=>{choices.shows[Number(e.dataset.count)].count=Number(e.value)});
+  document.querySelectorAll('[data-remove]').forEach(e=>e.onclick=()=>{choices.shows.splice(Number(e.dataset.remove),1);renderShows()});
+}
+function addShow(name,feed){if(!choices.shows.some(s=>s.feed===feed)){choices.shows.push({name,feed,count:1});renderShows();say(name+' added. Save choices to keep it.')}}
+function renderReport(last){
+  $('#report').className=last?.lines?'three':'three small';
+  $('#report').innerHTML=last?.lines?last.lines.map((line,i)=>`<span>${i+1}. ${esc(line)}</span>`).join(''):'Make a preview to see the report here.';
+  $('#episodes').innerHTML=last?.episodes?.length?'<h3 style="margin-top:17px">Episodes read</h3>'+last.episodes.map(e=>`<div class="episode"><a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title)}</a><div class="small">${esc(e.show)} · ${esc(e.published)}</div></div>`).join(''):'';
+}
+async function load(){const r=await fetch(BASE+'/api/status',{credentials:'same-origin'});if(!r.ok)throw Error('Could not open your settings');const d=await r.json();if(!choices){choices=d.settings;$('#angle').value=choices.angle||'';$('#time').value=choices.time;$('#timezone').value=choices.timezone;$('#enabled').checked=choices.enabled;renderShows()}renderReport(d.last);if(d.job.running){pending=true;say(d.job.stage+'…');setTimeout(load,3000)}else if(pending){pending=false;say(d.job.error||'Finished.',!!d.job.error)}else if(d.job.error){say(d.job.error,true)}document.querySelectorAll('#preview,#send').forEach(b=>b.disabled=d.job.running)}
+async function save(){choices.angle=$('#angle').value.trim();choices.time=$('#time').value;choices.timezone=$('#timezone').value.trim();choices.enabled=$('#enabled').checked;const r=await fetch(BASE+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json','X-Podcast-Action':'yes'},credentials:'same-origin',body:JSON.stringify(choices)});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not save');choices=d.settings;return d}
+async function run(kind){try{await save();const r=await fetch(BASE+'/api/run/'+kind,{method:'POST',headers:{'X-Podcast-Action':'yes'},credentials:'same-origin'});const d=await r.json();if(!r.ok)throw Error(d.error||'Could not start');pending=true;say(kind==='send'?'Reading and sending…':'Reading episodes…');setTimeout(load,1000)}catch(e){say(e.message,true)}}
+$('#search').onclick=async()=>{const q=$('#query').value.trim();if(q.length<2)return;$('#results').textContent='Searching…';try{const r=await fetch(BASE+'/api/search?q='+encodeURIComponent(q));const d=await r.json();if(!r.ok)throw Error(d.error||'Search failed');$('#results').innerHTML=d.results.length?d.results.map((x,i)=>`<div class="result"><strong>${esc(x.name)}</strong><div class="small">${esc(x.maker)}</div><button data-add="${i}">Add podcast</button></div>`).join(''):'No matches found.';document.querySelectorAll('[data-add]').forEach(e=>e.onclick=()=>{const x=d.results[Number(e.dataset.add)];addShow(x.name,x.feed)})}catch(e){$('#results').textContent=e.message}};
+$('#query').onkeydown=e=>{if(e.key==='Enter')$('#search').click()};
+$('#addFeed').onclick=()=>{const name=$('#feedName').value.trim(),feed=$('#feedUrl').value.trim();if(!name||!feed)return say('Add a name and feed address.',true);addShow(name,feed);$('#feedName').value='';$('#feedUrl').value=''};
+$('#save').onclick=async()=>{try{await save();say('Choices saved.')}catch(e){say(e.message,true)}};
+$('#preview').onclick=()=>run('preview');$('#send').onclick=()=>run('send');
+load().catch(e=>say(e.message,true));
+</script></body></html>

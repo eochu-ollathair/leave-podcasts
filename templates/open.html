@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open Leave the Podcasts</title>
+<style>body{margin:0;background:#0c141b;color:#f1f7f6;font:18px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}main{padding:25px;max-width:480px}h1{font-size:38px;line-height:1.05}p{color:#acc0c4}</style></head>
+<body><main><h1>Leave the Podcasts</h1><p id="message">This is a private settings page. Open your saved link to get in.</p></main>
+<script>
+const base={{ base|tojson }};
+const key=new URLSearchParams(location.hash.slice(1)).get('key');
+if(key){fetch(base+'/api/open',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({key})}).then(r=>{if(!r.ok)throw Error('This private link did not work.');location.replace(base+'/')}).catch(e=>{document.querySelector('#message').textContent=e.message})}
+</script></body></html>
