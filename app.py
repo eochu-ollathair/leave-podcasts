@@ -212,7 +212,8 @@ def audio_transcript(url):
     with tempfile.NamedTemporaryFile(prefix="leave-podcast-", suffix=".audio", delete=False) as target:
         path = Path(target.name)
         try:
-            with requests.get(url, stream=True, timeout=45) as response:
+            with requests.get(url, stream=True, timeout=45,
+                              headers={"User-Agent": "Mozilla/5.0"}) as response:
                 response.raise_for_status()
                 size = 0
                 for chunk in response.iter_content(128 * 1024):
@@ -319,23 +320,29 @@ def three_lines(episodes, angle=""):
                 note = model_answer(system, "SHOW: " + episode["show"] + "\nEPISODE: " + episode["title"] +
                                     "\nPART: " + str(index) + "/" + str(len(parts)) + "\nSPEECH:\n" + part)
                 notes.append(episode["show"] + " — " + episode["title"] + ":\n" + note)
-        system = ("Write EXACTLY THREE numbered lines, each at most 30 words. Each line must give one "
-                  "specific podcast claim and one direct consequence. Do not introduce a second claim to "
-                  "explain the first. Attribute the claim. Preserve numbers exactly: "
-                  "a percentage below 50 is not a majority. Apply the owner's angle by noticing a supported "
-                  "trade-off, missing evidence or who might benefit. Label any unproven benefit or hidden "
-                  "motive with 'could', 'might', or a question. Never state such speculation as fact. "
-                  "Never guess what an unclear number means. "
-                  "Do not invent facts. Use plain words and no filler.")
+        system = ("Write EXACTLY FOUR numbered lines, each at most 35 words. Lines 1 to 3 each give one "
+                  "specific claim and why it matters. If three readable podcasts are in the notes, use one "
+                  "line per podcast in their listed order. Otherwise use only the readable podcasts; never "
+                  "invent a missing show. Attribute "
+                  "each claim. Line 4 starts 'Cynic's view:' and applies the owner's angle at the end: "
+                  "explain the practical importance, who might benefit, or what evidence is missing. "
+                  "A possible hidden motive must say 'might', 'could', or be a question, never a fact. "
+                  "Preserve numbers exactly; a percentage below 50 is not a majority. Never guess what "
+                  "unclear speech means. Do not invent facts. Use plain words and no filler.")
         prompt = "OWNER'S ANGLE: " + (angle or "No special angle") + "\nNOTES:\n" + "\n\n".join(notes)
-        answer = model_answer(system, prompt, limit=450)
-        lines = [re.sub(r"^\s*\d+[.)]\s*", "", line).strip() for line in answer.splitlines() if line.strip()]
-        if len(lines) >= 3:
-            return lines[:3]
+        answer = model_answer(system, prompt, limit=550)
+        numbered = {}
+        for line in answer.splitlines():
+            match = re.match(r"^\s*([1-4])[.)]\s*(.+)", line)
+            if match:
+                numbered[int(match.group(1))] = match.group(2).strip()
+        if all(index in numbered for index in (1, 2, 3, 4)):
+            cynic = re.sub(r"^Cynic(?:'s|’s)? view:\s*", "", numbered[4], flags=re.IGNORECASE)
+            return [numbered[index] for index in (1, 2, 3)], cynic
     points = []
     for episode, speech in episodes:
         points.extend(extractive_points(episode, speech))
-    return (points + ["No further clear point was found in the available speech."] * 3)[:3]
+    return (points + ["No further clear point was found in the available speech."] * 3)[:3], ""
 
 
 def report(config, progress=lambda stage: None):
@@ -357,10 +364,12 @@ def report(config, progress=lambda stage: None):
     if not readable:
         raise RuntimeError("No episode speech could be read. " + "; ".join(problems[:2]))
     progress("Writing three lines")
-    lines = three_lines(readable, config.get("angle", ""))
+    lines, cynic = three_lines(readable, config.get("angle", ""))
     day = datetime.now(ZoneInfo(config["timezone"])).strftime("%d %B %Y")
     return {"at": datetime.now(timezone.utc).isoformat(), "episodes": selected, "usable": len(readable),
-            "lines": lines, "message": "Leave the Podcasts · " + day + "\n" + "\n".join(lines),
+            "lines": lines, "cynic": cynic,
+            "message": "Leave the Podcasts · " + day + "\n" + "\n".join(lines) +
+                       ("\nCynic's view: " + cynic if cynic else ""),
             "problems": problems}
 
 

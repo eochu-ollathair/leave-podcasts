@@ -10,7 +10,7 @@ Choose podcasts and get three short Telegram lines instead of listening for hour
 
 This version runs on a Mac or Linux computer with Python 3.10 or newer. It is not a phone app, and the Windows starter is not ready yet. The computer must stay on to send the morning report.
 
-The free report quotes useful speech and needs no AI account. If you connect your own text AI, it can combine claims, say why they matter, and use the sceptical angle you write. A suspected motive stays a possibility unless there is evidence. The maker's own AI is not available to other users.
+The free report quotes useful speech and needs no AI account. If you connect your own text AI, it can combine claims, say why they matter, and put your sceptical angle at the end. A suspected motive stays a possibility unless there is evidence. The maker's own AI is not available to other users.
 
 ## For people who want to run it by hand
 
