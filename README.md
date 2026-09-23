@@ -10,7 +10,11 @@ Choose podcasts and get a short Telegram report instead of listening for hours. 
 
 This version runs on a Mac or Linux computer with Python 3.10 or newer. It is not a phone app, and the Windows starter is not ready yet. The computer must stay on to send the morning report.
 
-Reply to a podcast's Telegram message with **“kill that podcast”** to remove and ignore that show. Send **“add podcast The Daily”** to add a new show. Each podcast gets its own message so “that” names one show. You can also say **“add YouTube The United Stand”** or **“kill YouTube The United Stand”** when Leave YouTube is running beside it with the same Telegram bot.
+## Which Telegram chat?
+
+Eochu's live reports come from [@cuntz2_bot](https://t.me/cuntz2_bot). Open that chat and send **“add podcast The Daily”** to add a show. Reply to a **new** podcast report with **“kill that podcast”** to remove and ignore that show. Each podcast gets its own message, so “that” names one show. For an older report, send **“kill podcast The Daily”** using the show's name. You can also send **“add YouTube The United Stand”** or **“kill YouTube The United Stand”** there when Leave YouTube is running beside it.
+
+If you download this program for yourself, the starter helps you create **your own** Telegram bot. Eochu's chat does not control your copy.
 
 ## Give this to your own AI
 
